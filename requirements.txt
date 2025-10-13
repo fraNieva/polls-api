@@ -1,0 +1,11 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy>=2.0.35
+python-dotenv==1.0.0
+python-multipart==0.0.6
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# Database drivers
+# SQLite is built into Python - no additional driver needed
+# psycopg2-binary==2.9.9  # PostgreSQL driver (install when ready for PostgreSQL)
