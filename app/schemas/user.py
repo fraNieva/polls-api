@@ -1,10 +1,11 @@
 from pydantic import BaseModel, EmailStr
+from typing import Optional
 
 # Define a schema for creating a new user
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    full_name: str | None = None
+    full_name: Optional[str] = None
     username: str
     is_active: bool = True
 
@@ -12,7 +13,7 @@ class UserCreate(BaseModel):
 class UserRead(BaseModel):
     id: int
     email: EmailStr
-    full_name: str | None = None
+    full_name: Optional[str] = None
     username: str
     is_active: bool
 

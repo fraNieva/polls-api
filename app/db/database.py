@@ -4,7 +4,6 @@ from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
 
-# TODO: INSTALL A DATABASE LIKE POSTGRESQL AND SET IT UP LOCALLY OR USE A CLOUD SERVICE
 # Load environment variables from a .env file
 load_dotenv()
 
