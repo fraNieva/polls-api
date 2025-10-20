@@ -38,14 +38,32 @@ pwd_context = CryptContext(
 
 # Password hashing
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        # Fallback verification for direct bcrypt hashes
+        import bcrypt
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 def get_password_hash(password: str) -> str:
     # Ensure password is not longer than 72 bytes (bcrypt limitation)
-    if len(password.encode('utf-8')) > 72:
-        # Truncate password to 72 bytes
-        password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
-    return pwd_context.hash(password)
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        # Truncate password to 72 bytes, ensuring valid UTF-8
+        password = password_bytes[:72].decode('utf-8', errors='ignore')
+    
+    try:
+        return pwd_context.hash(password)
+    except Exception:
+        # Fallback to a simpler bcrypt approach if passlib fails
+        import bcrypt
+        salt = bcrypt.gensalt(rounds=12)
+        return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+# Alias for compatibility with tests
+def hash_password(password: str) -> str:
+    """Alias for get_password_hash to maintain compatibility"""
+    return get_password_hash(password)
 
 # JWT token creation and verification
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
