@@ -21,9 +21,9 @@ def create_poll(
     db_poll = Poll(
         title=poll.title,
         description=poll.description,
-        status=poll.status,
-        owner_id=current_user.id,  # Link to current user
-        pub_date=datetime.now()
+        is_active=poll.is_active,
+        owner_id=current_user.id  # Link to current user
+        # pub_date will be auto-set by the model default
     )
     db.add(db_poll)
     db.commit()
