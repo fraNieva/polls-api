@@ -4,10 +4,17 @@ from datetime import datetime
 from typing import List
 
 from app.db.database import get_db
-from app.models.polls import Poll
+from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
 from app.schemas.poll import PollCreate, PollRead, PollUpdate
 from app.api.v1.endpoints.dependencies import get_current_user
+
+# Constants for error messages
+POLL_NOT_FOUND = "Poll not found"
+POLL_OPTION_NOT_FOUND = "Poll option not found"
+NOT_AUTHORIZED_UPDATE = "Not authorized to update this poll"
+NOT_AUTHORIZED_DELETE = "Not authorized to delete this poll"
+NOT_AUTHORIZED_ADD_OPTIONS = "Not authorized to add options to this poll"
 
 router = APIRouter(prefix="/polls", tags=["polls"])
 
@@ -50,7 +57,7 @@ def get_poll(poll_id: int, db: Session = Depends(get_db)):
     """Get a specific poll by ID."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail="Poll not found")
+        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
     return poll
 
 @router.put("/{poll_id}", response_model=PollRead)
@@ -63,13 +70,13 @@ def update_poll(
     """Update a poll. Only the owner can update their polls."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail="Poll not found")
+        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
     
     # Check if the current user is the owner
     if poll.owner_id != current_user.id:
         raise HTTPException(
             status_code=403, 
-            detail="Not authorized to update this poll"
+            detail=NOT_AUTHORIZED_UPDATE
         )
     
     # Update fields that were provided
@@ -90,15 +97,107 @@ def delete_poll(
     """Delete a poll. Only the owner can delete their polls."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail="Poll not found")
+        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
     
     # Check if the current user is the owner
     if poll.owner_id != current_user.id:
         raise HTTPException(
             status_code=403, 
-            detail="Not authorized to delete this poll"
+            detail=NOT_AUTHORIZED_DELETE
         )
     
     db.delete(poll)
     db.commit()
     return {"message": "Poll deleted successfully"}
+
+@router.post("/{poll_id}/options", status_code=status.HTTP_201_CREATED)
+def add_poll_option(
+    poll_id: int,
+    option_text: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Add an option to a poll. Only the poll owner can add options."""
+    poll = db.query(Poll).filter(Poll.id == poll_id).first()
+    if not poll:
+        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
+    
+    # Check if the current user is the owner
+    if poll.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=403, 
+            detail=NOT_AUTHORIZED_ADD_OPTIONS
+        )
+    
+    # Create the new option
+    poll_option = PollOption(
+        poll_id=poll_id,
+        text=option_text
+    )
+    db.add(poll_option)
+    db.commit()
+    db.refresh(poll_option)
+    
+    return {"message": "Option added successfully", "option_id": poll_option.id, "text": option_text}
+
+@router.post('/{poll_id}/vote/{option_id}', status_code=status.HTTP_200_OK)
+def vote_poll(
+    poll_id: int,
+    option_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Vote on a specific poll option."""
+    # Verify user is authenticated
+    if not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required to vote"
+        )
+    
+    # Get the poll
+    poll = db.query(Poll).filter(Poll.id == poll_id).first()
+    if not poll:
+        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
+    
+    # Verify if poll is active
+    if not poll.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Poll is not active"
+        )
+    
+    # Get the poll option
+    poll_option = db.query(PollOption).filter(
+        PollOption.id == option_id,
+        PollOption.poll_id == poll_id
+    ).first()
+    if not poll_option:
+        raise HTTPException(status_code=404, detail=POLL_OPTION_NOT_FOUND)
+    
+    # Check if user has already voted on this poll (any option)
+    existing_vote = db.query(Vote).join(PollOption).filter(
+        PollOption.poll_id == poll_id,
+        Vote.user_id == current_user.id
+    ).first()
+    if existing_vote:
+        raise HTTPException(
+            status_code=403,
+            detail="User has already voted on this poll"
+        )
+    
+    # Record the vote
+    vote = Vote(
+        user_id=current_user.id,
+        poll_option_id=option_id,
+        poll_id=poll_id  # Set the poll_id directly
+    )
+    db.add(vote)
+    
+    # Increment the vote count for this option
+    poll_option.vote_count += 1
+    
+    db.commit()
+    db.refresh(poll_option)
+    
+    return {"message": "Vote recorded successfully", "poll_id": poll_id, "option_id": option_id}

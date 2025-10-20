@@ -113,7 +113,8 @@ def test_poll_voting_functionality(db_session):
     # Act - User votes
     vote = Vote(
         user_id=voter.id,
-        poll_option_id=option.id
+        poll_option_id=option.id,
+        poll_id=poll.id  # Add poll_id
     )
     db_session.add(vote)
     db_session.commit()
@@ -204,14 +205,14 @@ def test_user_cannot_vote_twice_on_same_poll(db_session):
     db_session.refresh(option2)
     
     # Act - First vote
-    vote1 = Vote(user_id=voter.id, poll_option_id=option1.id)
+    vote1 = Vote(user_id=voter.id, poll_option_id=option1.id, poll_id=poll.id)
     db_session.add(vote1)
     db_session.commit()
     
     # Act & Assert - Second vote should fail (business logic constraint)
     # This test shows what we expect, implementation might need constraints
     with pytest.raises(Exception):  # Should raise integrity error
-        vote2 = Vote(user_id=voter.id, poll_option_id=option2.id)  # Same user, same poll
+        vote2 = Vote(user_id=voter.id, poll_option_id=option2.id, poll_id=poll.id)  # Same user, same poll
         db_session.add(vote2)
         db_session.commit()
 

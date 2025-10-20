@@ -51,14 +51,16 @@ class Vote(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     poll_option_id = Column(Integer, ForeignKey("poll_options.id"), nullable=False)
+    poll_id = Column(Integer, ForeignKey("polls.id"), nullable=False)  # Direct reference to poll
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)  # Auto-set to current time
     
     # Relationships
     poll_option = relationship("PollOption", back_populates="vote_details")
+    poll = relationship("Poll")  # Direct relationship to poll
     user = relationship("User")
 
-    # Prevent duplicate votes by same user on same option
+    # Prevent duplicate votes by same user on same poll (the business rule we want)
     __table_args__ = (
-        UniqueConstraint('poll_option_id', 'user_id', name='unique_user_vote_per_option'),
+        UniqueConstraint('poll_id', 'user_id', name='unique_user_vote_per_poll'),
     )
