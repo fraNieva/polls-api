@@ -2,6 +2,9 @@ from fastapi import FastAPI
 from app.db.database import engine, Base
 from app.api.v1.endpoints import users, auth, polls
 
+# Import models to register them with SQLAlchemy
+from app.models import user, polls as poll_models
+
 # Create all tables in the database
 Base.metadata.create_all(bind=engine)
 
