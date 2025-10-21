@@ -5,28 +5,15 @@ from jose import JWTError, jwt
 from dotenv import load_dotenv
 import os
 
-# Load environment variables from a .env file
-load_dotenv()
-
-# Get the secret key from the environment variables
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from dotenv import load_dotenv
-import os
+from app.core.constants import AuthConfig
 
 # Load environment variables from a .env file
 load_dotenv()
 
 # Get the secret key from the environment variables
 SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ALGORITHM = AuthConfig.ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = AuthConfig.ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Configure password context with proper bcrypt settings for Python 3.14 compatibility
 pwd_context = CryptContext(

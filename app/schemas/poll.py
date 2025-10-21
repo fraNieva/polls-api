@@ -2,20 +2,21 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 from typing import Optional, List
 import re
+from app.core.constants import BusinessLimits
 
 # Schema for creating a new poll
 class PollCreate(BaseModel):
     title: str = Field(
         ...,
-        min_length=5,
-        max_length=200,
-        description='Poll title (5-200 characters)',
+        min_length=BusinessLimits.MIN_POLL_TITLE_LENGTH,
+        max_length=BusinessLimits.MAX_POLL_TITLE_LENGTH,
+        description=f'Poll title ({BusinessLimits.MIN_POLL_TITLE_LENGTH}-{BusinessLimits.MAX_POLL_TITLE_LENGTH} characters)',
         example="What's yout favourite programming language?"
     )
     description: Optional[str] = Field(
         None,
-        max_length=1000,
-        description='Optional poll description (max 1000 characters)',
+        max_length=BusinessLimits.MAX_POLL_DESCRIPTION_LENGTH,
+        description=f'Optional poll description (max {BusinessLimits.MAX_POLL_DESCRIPTION_LENGTH} characters)',
         example="Vote for your preferred programming language for web development"
     )
     is_active: bool = Field(
@@ -50,14 +51,17 @@ class PollCreate(BaseModel):
             
         return v
         
-    @model_validator
+    @model_validator(mode='before')
     def validate_poll_data(cls, values):
-        title = values.get('title', '')
-        description = values.get('description', '')
+        if isinstance(values, dict):
+            title = values.get('title', '')
+            description = values.get('description', '')
+            
+            # Title and description cannot be identical
+            if title and description and title.lower().strip() == description.lower().strip():
+                raise ValueError('Title and description cannot be identical')
         
-        # Title and description cannot be identical
-        if title and description and title.lower().strip() == description.lower().strip():
-            raise ValueError('Title and description cannot be identical')
+        return values
             
         return values
     

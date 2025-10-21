@@ -19,17 +19,16 @@ from app.schemas.error import (
     ServerErrorResponse
 )
 
+from app.core.constants import (
+    ErrorMessages, 
+    BusinessLimits, 
+    ErrorCodes
+)
+
 import logging
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-# Constants for error messages
-POLL_NOT_FOUND = "Poll not found"
-POLL_OPTION_NOT_FOUND = "Poll option not found"
-NOT_AUTHORIZED_UPDATE = "Not authorized to update this poll"
-NOT_AUTHORIZED_DELETE = "Not authorized to delete this poll"
-NOT_AUTHORIZED_ADD_OPTIONS = "Not authorized to add options to this poll"
 
 router = APIRouter(prefix="/polls", tags=["polls"])
 
@@ -228,16 +227,15 @@ def _validate_poll_business_rules(poll: PollCreate, current_user: User, db: Sess
     
     # Check user poll creation limits
     user_poll_count = db.query(Poll).filter(Poll.owner_id == current_user.id).count()
-    MAX_POLLS_PER_USER = 100  # Example limit
     
-    if user_poll_count >= MAX_POLLS_PER_USER:
+    if user_poll_count >= BusinessLimits.MAX_POLLS_PER_USER:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "message": f"Maximum number of polls per user exceeded ({MAX_POLLS_PER_USER})",
-                "error_code": "POLL_LIMIT_EXCEEDED",
+                "message": f"Maximum number of polls per user exceeded ({BusinessLimits.MAX_POLLS_PER_USER})",
+                "error_code": ErrorCodes.BUSINESS_RULE_VIOLATION,
                 "current_count": user_poll_count,
-                "max_allowed": MAX_POLLS_PER_USER
+                "max_allowed": BusinessLimits.MAX_POLLS_PER_USER
             }
         )
     
@@ -279,7 +277,7 @@ def get_poll(poll_id: int, db: Session = Depends(get_db)):
     """Get a specific poll by ID."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.ErrorMessages.POLL_NOT_FOUND)
     return poll
 
 @router.put("/{poll_id}", response_model=PollRead)
@@ -292,13 +290,13 @@ def update_poll(
     """Update a poll. Only the owner can update their polls."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.ErrorMessages.POLL_NOT_FOUND)
     
     # Check if the current user is the owner
     if poll.owner_id != current_user.id:
         raise HTTPException(
             status_code=403, 
-            detail=NOT_AUTHORIZED_UPDATE
+            detail=ErrorMessages.NOT_AUTHORIZED_UPDATE
         )
     
     # Update fields that were provided
@@ -319,13 +317,13 @@ def delete_poll(
     """Delete a poll. Only the owner can delete their polls."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
     
     # Check if the current user is the owner
     if poll.owner_id != current_user.id:
         raise HTTPException(
             status_code=403, 
-            detail=NOT_AUTHORIZED_DELETE
+            detail=ErrorMessages.NOT_AUTHORIZED_DELETE
         )
     
     db.delete(poll)
@@ -342,13 +340,13 @@ def add_poll_option(
     """Add an option to a poll. Only the poll owner can add options."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
     
     # Check if the current user is the owner
     if poll.owner_id != current_user.id:
         raise HTTPException(
             status_code=403, 
-            detail=NOT_AUTHORIZED_ADD_OPTIONS
+            detail=ErrorMessages.NOT_AUTHORIZED_ADD_OPTIONS
         )
     
     # Create the new option
@@ -380,7 +378,7 @@ def vote_poll(
     # Get the poll
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail=POLL_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
     
     # Verify if poll is active
     if not poll.is_active:
@@ -395,7 +393,7 @@ def vote_poll(
         PollOption.poll_id == poll_id
     ).first()
     if not poll_option:
-        raise HTTPException(status_code=404, detail=POLL_OPTION_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_OPTION_NOT_FOUND)
     
     # Check if user has already voted on this poll (any option)
     existing_vote = db.query(Vote).join(PollOption).filter(

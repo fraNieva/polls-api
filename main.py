@@ -10,6 +10,7 @@ from app.core.exception import (
     database_exception_handler,
     general_exception_handler
 )
+from app.core.constants import APIConfig
 
 # Import models to register them with SQLAlchemy
 from app.models import user, polls as poll_models
@@ -17,14 +18,23 @@ from app.models import user, polls as poll_models
 # Create all tables in the database
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Polls API", version="1.0.0")
+# Create FastAPI app with centralized configuration
+app = FastAPI(
+    title=APIConfig.API_TITLE,
+    description=APIConfig.API_DESCRIPTION,
+    version=APIConfig.API_VERSION
+)
+
+# Register exception handlers
 app.add_exception_handler(ValidationError, validation_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(SQLAlchemyError, database_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
-app.include_router(users.router, prefix="/api/v1")
-app.include_router(auth.router, prefix="/api/v1")
-app.include_router(polls.router, prefix="/api/v1")
+
+# Include routers with centralized prefix
+app.include_router(users.router, prefix=APIConfig.API_V1_PREFIX)
+app.include_router(auth.router, prefix=APIConfig.API_V1_PREFIX)
+app.include_router(polls.router, prefix=APIConfig.API_V1_PREFIX)
 
 @app.get("/")
 def read_root():
