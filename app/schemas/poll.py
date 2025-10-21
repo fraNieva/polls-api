@@ -62,8 +62,6 @@ class PollCreate(BaseModel):
                 raise ValueError('Title and description cannot be identical')
         
         return values
-            
-        return values
     
 class PollCreateWithOptions(PollCreate):
     """Enhanced schema for creating polls with initial options"""
@@ -112,6 +110,48 @@ class PollRead(BaseModel):
 
 # Schema for updating a poll
 class PollUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
+    title: Optional[str] = Field(
+        None,
+        min_length=BusinessLimits.MIN_POLL_TITLE_LENGTH,
+        max_length=BusinessLimits.MAX_POLL_TITLE_LENGTH,
+        description=f'Poll title ({BusinessLimits.MIN_POLL_TITLE_LENGTH}-{BusinessLimits.MAX_POLL_TITLE_LENGTH} characters)',
+    )
+    description: Optional[str] = Field(
+        None,
+        max_length=BusinessLimits.MAX_POLL_DESCRIPTION_LENGTH,
+        description=f'Optional poll description (max {BusinessLimits.MAX_POLL_DESCRIPTION_LENGTH} characters)',
+    )
     is_active: Optional[bool] = None
+
+    @field_validator('title')
+    def validate_title(cls, v):
+        # Skip validation if field is not being updated (None)
+        if v is None:
+            return v
+            
+        if not v or not v.strip():
+            raise ValueError('Title cannot be empty or just whitespace')
+        
+        # Remove excessive whitespace
+        v = ' '.join(v.split())
+        
+        # Check for inappropriate content (basic example)
+        forbidden_words = ['spam', 'test123', 'abuse']
+        if any(word.lower() in v.lower() for word in forbidden_words):
+            raise ValueError('Title contains inappropriate content')
+        
+        # Must contain at least one letter
+        if not re.search(r'[a-zA-Z]', v):
+            raise ValueError('Title must contain at least one letter')
+            
+        return v
+        
+    @field_validator('description')
+    def validate_description(cls, v):
+        # Skip validation if field is not being updated (None)
+        if v is None:
+            return v
+            
+        # Remove excessive whitespace
+        v = ' '.join(v.split()) if v.strip() else None
+        return v
