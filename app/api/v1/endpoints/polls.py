@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from datetime import datetime
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from pydantic import ValidationError
+from datetime import datetime, timezone
 from typing import List
 
 from app.db.database import get_db
@@ -8,6 +10,19 @@ from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
 from app.schemas.poll import PollCreate, PollRead, PollUpdate
 from app.api.v1.endpoints.dependencies import get_current_user
+
+from app.schemas.error import (
+    ValidationErrorResponse, 
+    BusinessErrorResponse, 
+    AuthErrorResponse,
+    RateLimitErrorResponse,
+    ServerErrorResponse
+)
+
+import logging
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Constants for error messages
 POLL_NOT_FOUND = "Poll not found"
@@ -18,24 +33,231 @@ NOT_AUTHORIZED_ADD_OPTIONS = "Not authorized to add options to this poll"
 
 router = APIRouter(prefix="/polls", tags=["polls"])
 
-@router.post("/", response_model=PollRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=PollRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new poll",
+    description="Create a new poll. The authenticated user becomes the owner. Optionally include initial options.",
+    responses={
+        201: {
+            "description": "Poll created successfully",
+            "model": PollRead,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": 1,
+                        "title": "Favorite Programming Language",
+                        "description": "Vote for your preferred language",
+                        "is_active": True,
+                        "owner_id": 1,
+                        "pub_date": "2024-01-01T12:00:00Z",
+                        "options": []
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Business logic error",
+            "model": BusinessErrorResponse,
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "duplicate_poll": {
+                            "summary": "Duplicate poll title",
+                            "value": {
+                                "message": "A poll with this title already exists",
+                                "error_code": "DUPLICATE_POLL_TITLE",
+                                "details": {"existing_poll_id": 123},
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/"
+                            }
+                        },
+                        "poll_limit": {
+                            "summary": "Poll creation limit exceeded",
+                            "value": {
+                                "message": "Maximum number of polls per user exceeded (100)",
+                                "error_code": "POLL_LIMIT_EXCEEDED",
+                                "details": {
+                                    "current_count": 100,
+                                    "max_allowed": 100
+                                },
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required",
+            "model": AuthErrorResponse
+        },
+        422: {
+            "description": "Validation error",
+            "model": ValidationErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Validation failed",
+                        "error_code": "VALIDATION_ERROR",
+                        "errors": [
+                            {
+                                "loc": ["title"],
+                                "msg": "ensure this value has at least 5 characters",
+                                "type": "value_error.any_str.min_length",
+                                "ctx": {"limit_value": 5}
+                            }
+                        ],
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/"
+                    }
+                }
+            }
+        },
+        429: {
+            "description": "Rate limit exceeded",
+            "model": RateLimitErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ServerErrorResponse
+        }
+    }
+)
 def create_poll(
     poll: PollCreate, 
+    request: Request,
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new poll. The current authenticated user becomes the owner."""
-    db_poll = Poll(
-        title=poll.title,
-        description=poll.description,
-        is_active=poll.is_active,
-        owner_id=current_user.id  # Link to current user
-        # pub_date will be auto-set by the model default
-    )
-    db.add(db_poll)
-    db.commit()
-    db.refresh(db_poll)
-    return db_poll
+    """Create a new poll with comprehensive validation and error handling."""
+    
+    try:
+        # Log poll creation attempt
+        logger.info(f"User {current_user.id} attempting to create poll: '{poll.title}'")
+        
+        # Additional business logic validation
+        _validate_poll_business_rules(poll, current_user, db)
+        
+        # Check for duplicate titles by this user
+        existing_poll = db.query(Poll).filter(
+            Poll.title == poll.title.strip(),
+            Poll.owner_id == current_user.id
+        ).first()
+        
+        if existing_poll:
+            logger.warning(f"User {current_user.id} attempted to create duplicate poll: '{poll.title}'")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "A poll with this title already exists",
+                    "error_code": "DUPLICATE_POLL_TITLE",
+                    "existing_poll_id": existing_poll.id
+                }
+            )
+        
+        # Create the poll
+        db_poll = Poll(
+            title=poll.title.strip(),
+            description=poll.description.strip() if poll.description else None,
+            is_active=poll.is_active,
+            owner_id=current_user.id
+        )
+        
+        db.add(db_poll)
+        db.commit()
+        db.refresh(db_poll)
+        
+        logger.info(f"Poll created successfully: ID {db_poll.id}, Title: '{db_poll.title}'")
+        
+        return db_poll
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (they're already properly formatted)
+        raise
+        
+    except ValidationError as e:
+        logger.error(f"Validation error creating poll: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Validation failed",
+                "error_code": "VALIDATION_ERROR",
+                "errors": e.errors()
+            }
+        )
+        
+    except IntegrityError as e:
+        logger.error(f"Database integrity error creating poll: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Data integrity constraint violated",
+                "error_code": "INTEGRITY_ERROR",
+                "hint": "Check for duplicate values or invalid references"
+            }
+        )
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Database error creating poll: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "Database operation failed",
+                "error_code": "DATABASE_ERROR"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Unexpected error creating poll: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "An unexpected error occurred",
+                "error_code": "INTERNAL_ERROR"
+            }
+        )
+
+def _validate_poll_business_rules(poll: PollCreate, current_user: User, db: Session):
+    """Additional business logic validation"""
+    
+    # Check user poll creation limits
+    user_poll_count = db.query(Poll).filter(Poll.owner_id == current_user.id).count()
+    MAX_POLLS_PER_USER = 100  # Example limit
+    
+    if user_poll_count >= MAX_POLLS_PER_USER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": f"Maximum number of polls per user exceeded ({MAX_POLLS_PER_USER})",
+                "error_code": "POLL_LIMIT_EXCEEDED",
+                "current_count": user_poll_count,
+                "max_allowed": MAX_POLLS_PER_USER
+            }
+        )
+    
+    # Check for rate limiting (example: max 5 polls per hour)
+    from datetime import datetime, timedelta
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    recent_polls = db.query(Poll).filter(
+        Poll.owner_id == current_user.id,
+        Poll.pub_date >= one_hour_ago
+    ).count()
+    
+    if recent_polls >= 5:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "message": "Rate limit exceeded. Maximum 5 polls per hour.",
+                "error_code": "RATE_LIMIT_EXCEEDED",
+                "retry_after": "3600"
+            }
+        )
 
 @router.get("/", response_model=List[PollRead])
 def get_polls(db: Session = Depends(get_db)):
