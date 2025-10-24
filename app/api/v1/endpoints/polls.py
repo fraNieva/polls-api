@@ -1,15 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy import func
 from pydantic import ValidationError
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
+from enum import Enum
+import math
 
 from app.db.database import get_db
 from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
-from app.schemas.poll import PollCreate, PollRead, PollUpdate
+from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse
 from app.api.v1.endpoints.dependencies import get_current_user
+from app.core.constants import DatabaseConfig
 
 from app.schemas.error import (
     ValidationErrorResponse, 
@@ -29,6 +33,15 @@ import logging
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Define sort options enum for validation
+class SortOption(str, Enum):
+    CREATED_DESC = "created_desc"
+    CREATED_ASC = "created_asc" 
+    TITLE_ASC = "title_asc"
+    TITLE_DESC = "title_desc"
+    VOTES_DESC = "votes_desc"
+    VOTES_ASC = "votes_asc"
 
 router = APIRouter(prefix="/polls", tags=["polls"])
 
@@ -257,11 +270,116 @@ def _validate_poll_business_rules(poll: PollCreate, current_user: User, db: Sess
             }
         )
 
-@router.get("/", response_model=List[PollRead])
-def get_polls(db: Session = Depends(get_db)):
-    """Get all polls."""
-    polls = db.query(Poll).all()
-    return polls
+@router.get("/", response_model=PaginatedPollResponse)
+def get_polls(
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(DatabaseConfig.DEFAULT_PAGE_SIZE, ge=1, le=DatabaseConfig.MAX_PAGE_SIZE, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search in poll titles"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    owner_id: Optional[int] = Query(None, description="Filter by owner ID"),
+    sort: SortOption = Query(SortOption.CREATED_DESC, description="Sort order")
+):
+    """
+    Get paginated list of polls with filtering and sorting options.
+    
+    - **page**: Page number (starts from 1)
+    - **size**: Number of polls per page (1-100)
+    - **search**: Search text in poll titles (case-insensitive)
+    - **is_active**: Filter by poll active status
+    - **owner_id**: Filter polls by specific owner
+    - **sort**: Sort order options:
+        - created_desc: Newest first (default)
+        - created_asc: Oldest first
+        - title_asc: Title A-Z
+        - title_desc: Title Z-A
+        - votes_desc: Most voted first
+        - votes_asc: Least voted first
+    """
+    try:
+        # Build base query
+        query = db.query(Poll)
+        
+        # Apply filters
+        if search:
+            query = query.filter(Poll.title.ilike(f"%{search}%"))
+        
+        if is_active is not None:
+            query = query.filter(Poll.is_active == is_active)
+            
+        if owner_id is not None:
+            query = query.filter(Poll.owner_id == owner_id)
+        
+        # Apply sorting
+        if sort == SortOption.CREATED_ASC:
+            query = query.order_by(Poll.pub_date.asc())
+        elif sort == SortOption.TITLE_ASC:
+            query = query.order_by(Poll.title.asc())
+        elif sort == SortOption.TITLE_DESC:
+            query = query.order_by(Poll.title.desc())
+        elif sort == SortOption.VOTES_DESC:
+            # Count total votes for each poll and sort by that
+            subquery = (
+                db.query(
+                    PollOption.poll_id,
+                    func.sum(PollOption.vote_count).label('total_votes')
+                )
+                .group_by(PollOption.poll_id)
+                .subquery()
+            )
+            query = (
+                query.outerjoin(subquery, Poll.id == subquery.c.poll_id)
+                .order_by(func.coalesce(subquery.c.total_votes, 0).desc())
+            )
+        elif sort == SortOption.VOTES_ASC:
+            # Count total votes for each poll and sort by that
+            subquery = (
+                db.query(
+                    PollOption.poll_id,
+                    func.sum(PollOption.vote_count).label('total_votes')
+                )
+                .group_by(PollOption.poll_id)
+                .subquery()
+            )
+            query = (
+                query.outerjoin(subquery, Poll.id == subquery.c.poll_id)
+                .order_by(func.coalesce(subquery.c.total_votes, 0).asc())
+            )
+        else:  # Default: CREATED_DESC
+            query = query.order_by(Poll.pub_date.desc())
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply pagination
+        offset = (page - 1) * size
+        polls = query.offset(offset).limit(size).all()
+        
+        # Calculate pagination metadata
+        pages = math.ceil(total / size) if total > 0 else 1
+        has_next = page < pages
+        has_prev = page > 1
+        
+        return PaginatedPollResponse(
+            polls=polls,
+            total=total,
+            page=page,
+            size=size,
+            pages=pages,
+            has_next=has_next,
+            has_prev=has_prev
+        )
+        
+    except Exception as e:
+        logger.error(f"Error retrieving polls: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": ErrorMessages.INTERNAL_ERROR,
+                "error_code": "POLL_RETRIEVAL_FAILED"
+            }
+        )
+
 
 @router.get("/my-polls", response_model=List[PollRead])
 def get_my_polls(
@@ -277,7 +395,7 @@ def get_poll(poll_id: int, db: Session = Depends(get_db)):
     """Get a specific poll by ID."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail=ErrorMessages.ErrorMessages.POLL_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
     return poll
 
 @router.put("/{poll_id}", response_model=PollRead)
@@ -290,7 +408,7 @@ def update_poll(
     """Update a poll. Only the owner can update their polls."""
     poll = db.query(Poll).filter(Poll.id == poll_id).first()
     if not poll:
-        raise HTTPException(status_code=404, detail=ErrorMessages.ErrorMessages.POLL_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
     
     # Check if the current user is the owner
     if poll.owner_id != current_user.id:

@@ -118,3 +118,5 @@ polls.db
 
 # macOS
 .DS_Store
+
+.ai-assistant-config.md

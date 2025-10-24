@@ -42,8 +42,12 @@ class TestPollCreation:
             
             response = client.post("/api/v1/polls/", json=poll_data, headers=auth_headers)
             
-            # Should either succeed or fail with appropriate status
-            assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_500_INTERNAL_SERVER_ERROR]
+            # Should either succeed, conflict with duplicate, or fail with server error
+            assert response.status_code in [
+                status.HTTP_201_CREATED,      # Success
+                status.HTTP_409_CONFLICT,     # Duplicate poll title (valid business rule)
+                status.HTTP_500_INTERNAL_SERVER_ERROR  # Server error
+            ]
             
             if response.status_code == status.HTTP_201_CREATED:
                 data = response.json()
@@ -53,6 +57,19 @@ class TestPollCreation:
                 assert "id" in data
                 assert "owner_id" in data
                 assert "pub_date" in data
+            elif response.status_code == status.HTTP_409_CONFLICT:
+                # Validate duplicate poll error response
+                data = response.json()
+                # Check if wrapped in detail or returned directly
+                if "detail" in data:
+                    error_data = data["detail"]
+                else:
+                    error_data = data
+                
+                assert "error_code" in error_data
+                assert error_data["error_code"] == "DUPLICATE_POLL_TITLE"
+                assert "message" in error_data
+                assert "existing_poll_id" in error_data
         finally:
             # Clean up the override
             app.dependency_overrides.clear()
@@ -101,12 +118,29 @@ class TestPollCreation:
             
             response = client.post("/api/v1/polls/", json=poll_data, headers=auth_headers)
             
-            assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_500_INTERNAL_SERVER_ERROR]
+            # Should either succeed, conflict with duplicate, or fail with server error
+            assert response.status_code in [
+                status.HTTP_201_CREATED,      # Success
+                status.HTTP_409_CONFLICT,     # Duplicate poll title (valid business rule)
+                status.HTTP_500_INTERNAL_SERVER_ERROR  # Server error
+            ]
             
             if response.status_code == status.HTTP_201_CREATED:
                 data = response.json()
                 assert data["title"] == "Simple Poll"
                 assert "is_active" in data  # Should have default value
+            elif response.status_code == status.HTTP_409_CONFLICT:
+                # Validate duplicate poll error response
+                data = response.json()
+                # Check if wrapped in detail or returned directly
+                if "detail" in data:
+                    error_data = data["detail"]
+                else:
+                    error_data = data
+                
+                assert "error_code" in error_data
+                assert error_data["error_code"] == "DUPLICATE_POLL_TITLE"
+                assert "message" in error_data
         finally:
             app.dependency_overrides.clear()
 
@@ -114,13 +148,131 @@ class TestPollCreation:
 class TestPollRetrieval:
     """Test poll retrieval endpoint contracts"""
 
-    def test_get_all_polls(self, client):
-        """Test getting all polls"""
+    def test_get_all_polls_basic(self, client):
+        """Test getting all polls - basic functionality"""
         response = client.get("/api/v1/polls/")
         
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert isinstance(data, list)  # Should return a list even if empty
+        
+        # Should return paginated response structure
+        assert "polls" in data
+        assert "total" in data
+        assert "page" in data
+        assert "size" in data
+        assert "pages" in data
+        assert "has_next" in data
+        assert "has_prev" in data
+        
+        assert isinstance(data["polls"], list)
+        assert isinstance(data["total"], int)
+        assert data["page"] == 1  # Default first page
+        assert data["size"] == 10  # Default page size
+        assert data["has_prev"] is False  # First page should not have previous
+
+    def test_get_polls_with_pagination(self, client):
+        """Test pagination parameters"""
+        # Test custom page size
+        response = client.get("/api/v1/polls/?page=1&size=5")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["page"] == 1
+        assert data["size"] == 5
+        
+        # Test page 2
+        response = client.get("/api/v1/polls/?page=2&size=5")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["page"] == 2
+        assert data["size"] == 5
+
+    def test_get_polls_pagination_validation(self, client):
+        """Test pagination parameter validation"""
+        # Test invalid page (too low)
+        response = client.get("/api/v1/polls/?page=0")
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        
+        # Test invalid size (too high)
+        response = client.get("/api/v1/polls/?size=1000")
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        
+        # Test negative page
+        response = client.get("/api/v1/polls/?page=-1")
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    def test_get_polls_with_search(self, client):
+        """Test search functionality"""
+        # Test search by title/description
+        response = client.get("/api/v1/polls/?search=programming")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "polls" in data
+        
+        # Test empty search
+        response = client.get("/api/v1/polls/?search=")
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_get_polls_with_filters(self, client):
+        """Test filtering functionality"""
+        # Test filter by active status
+        response = client.get("/api/v1/polls/?is_active=true")
+        assert response.status_code == status.HTTP_200_OK
+        
+        response = client.get("/api/v1/polls/?is_active=false")
+        assert response.status_code == status.HTTP_200_OK
+        
+        # Test filter by owner
+        response = client.get("/api/v1/polls/?owner_id=1")
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_get_polls_with_sorting(self, client):
+        """Test sorting functionality"""
+        # Test different sort options
+        sort_options = [
+            "created_desc", "created_asc", 
+            "title_asc", "title_desc", 
+            "votes_desc"
+        ]
+        
+        for sort_by in sort_options:
+            response = client.get(f"/api/v1/polls/?sort={sort_by}")
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert "polls" in data
+
+    def test_get_polls_invalid_sort(self, client):
+        """Test invalid sort parameter"""
+        response = client.get("/api/v1/polls/?sort=invalid_sort")
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_get_polls_combined_filters(self, client):
+        """Test combining multiple filters"""
+        response = client.get(
+            "/api/v1/polls/?page=1&size=5&search=test&is_active=true&sort=created_desc"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["page"] == 1
+        assert data["size"] == 5
+        assert "polls" in data
+
+    def test_get_polls_response_structure(self, client):
+        """Test that response includes proper metadata and links"""
+        response = client.get("/api/v1/polls/?page=1&size=5")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        
+        # Check pagination metadata
+        required_fields = ["polls", "total", "page", "size", "pages", "has_next", "has_prev"]
+        for field in required_fields:
+            assert field in data
+        
+        # Links are optional but should be present
+        if "links" in data:
+            links = data["links"]
+            assert "self" in links
+            assert "first" in links
+            assert "last" in links
 
     def test_get_poll_by_id(self, client):
         """Test getting specific poll by ID"""

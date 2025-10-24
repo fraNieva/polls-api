@@ -155,3 +155,64 @@ class PollUpdate(BaseModel):
         # Remove excessive whitespace
         v = ' '.join(v.split()) if v.strip() else None
         return v
+
+
+# Enhanced response schemas for paginated endpoints
+class PaginationMeta(BaseModel):
+    """Pagination metadata for responses"""
+    total: int = Field(..., description="Total number of items")
+    page: int = Field(..., description="Current page number")
+    size: int = Field(..., description="Items per page")
+    pages: int = Field(..., description="Total number of pages")
+    has_next: bool = Field(..., description="Whether there are more pages")
+    has_prev: bool = Field(..., description="Whether there are previous pages")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "total": 25,
+                "page": 2,
+                "size": 10,
+                "pages": 3,
+                "has_next": True,
+                "has_prev": True
+            }
+        }
+
+
+class PaginatedPollResponse(BaseModel):
+    """Paginated response for poll listings"""
+    polls: List[PollRead] = Field(..., description="List of polls for current page")
+    total: int = Field(..., description="Total number of polls")
+    page: int = Field(..., description="Current page number") 
+    size: int = Field(..., description="Items per page")
+    pages: int = Field(..., description="Total number of pages")
+    has_next: bool = Field(..., description="Whether there are more pages")
+    has_prev: bool = Field(..., description="Whether there are previous pages")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "polls": [
+                    {
+                        "id": 1,
+                        "title": "Favorite Programming Language",
+                        "description": "What's your favorite programming language?",
+                        "is_active": True,
+                        "created_at": "2023-12-01T10:00:00Z",
+                        "updated_at": "2023-12-01T10:00:00Z",
+                        "owner_id": 1,
+                        "options": [
+                            {"id": 1, "text": "Python", "vote_count": 5},
+                            {"id": 2, "text": "JavaScript", "vote_count": 3}
+                        ]
+                    }
+                ],
+                "total": 25,
+                "page": 1,
+                "size": 10,
+                "pages": 3,
+                "has_next": True,
+                "has_prev": False
+            }
+        }
