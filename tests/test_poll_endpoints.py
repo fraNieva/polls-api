@@ -156,7 +156,7 @@ class TestPollRetrieval:
         data = response.json()
         
         # Should return paginated response structure
-        assert "polls" in data
+        assert "items" in data
         assert "total" in data
         assert "page" in data
         assert "size" in data
@@ -164,7 +164,7 @@ class TestPollRetrieval:
         assert "has_next" in data
         assert "has_prev" in data
         
-        assert isinstance(data["polls"], list)
+        assert isinstance(data["items"], list)
         assert isinstance(data["total"], int)
         assert data["page"] == 1  # Default first page
         assert data["size"] == 10  # Default page size
@@ -206,7 +206,7 @@ class TestPollRetrieval:
         response = client.get("/api/v1/polls/?search=programming")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert "polls" in data
+        assert "items" in data
         
         # Test empty search
         response = client.get("/api/v1/polls/?search=")
@@ -238,7 +238,7 @@ class TestPollRetrieval:
             response = client.get(f"/api/v1/polls/?sort={sort_by}")
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert "polls" in data
+            assert "items" in data
 
     def test_get_polls_invalid_sort(self, client):
         """Test invalid sort parameter"""
@@ -254,7 +254,7 @@ class TestPollRetrieval:
         data = response.json()
         assert data["page"] == 1
         assert data["size"] == 5
-        assert "polls" in data
+        assert "items" in data
 
     def test_get_polls_response_structure(self, client):
         """Test that response includes proper metadata and links"""
@@ -263,7 +263,7 @@ class TestPollRetrieval:
         data = response.json()
         
         # Check pagination metadata
-        required_fields = ["polls", "total", "page", "size", "pages", "has_next", "has_prev"]
+        required_fields = ["items", "total", "page", "size", "pages", "has_next", "has_prev"]
         for field in required_fields:
             assert field in data
         
@@ -307,7 +307,16 @@ class TestPollRetrieval:
             
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert isinstance(data, list)  # Should return a list
+            
+            # Should return paginated response structure
+            assert "items" in data
+            assert "total" in data
+            assert "page" in data
+            assert "size" in data
+            assert "pages" in data
+            assert "has_next" in data
+            assert "has_prev" in data
+            assert isinstance(data["items"], list)
         finally:
             app.dependency_overrides.clear()
 
@@ -316,6 +325,153 @@ class TestPollRetrieval:
         response = client.get("/api/v1/polls/my-polls")
         
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_get_my_polls_with_pagination(self, auth_headers):
+        """Test my polls with pagination parameters"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        
+        try:
+            client = TestClient(app)
+            
+            # Test with custom page size
+            response = client.get("/api/v1/polls/my-polls?page=1&size=5", headers=auth_headers)
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["page"] == 1
+            assert data["size"] == 5
+            
+            # Test second page
+            response = client.get("/api/v1/polls/my-polls?page=2&size=3", headers=auth_headers)
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["page"] == 2
+            assert data["size"] == 3
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_my_polls_with_search(self, auth_headers):
+        """Test my polls with search functionality"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        
+        try:
+            client = TestClient(app)
+            
+            # Test search functionality
+            response = client.get("/api/v1/polls/my-polls?search=programming", headers=auth_headers)
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert "items" in data
+            
+            # Test empty search
+            response = client.get("/api/v1/polls/my-polls?search=", headers=auth_headers)
+            assert response.status_code == status.HTTP_200_OK
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_my_polls_with_filters(self, auth_headers):
+        """Test my polls with filtering options"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        
+        try:
+            client = TestClient(app)
+            
+            # Test filter by active status
+            response = client.get("/api/v1/polls/my-polls?is_active=true", headers=auth_headers)
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert "items" in data
+            
+            # Test filter by inactive status
+            response = client.get("/api/v1/polls/my-polls?is_active=false", headers=auth_headers)
+            assert response.status_code == status.HTTP_200_OK
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_my_polls_with_sorting(self, auth_headers):
+        """Test my polls with different sorting options"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        
+        try:
+            client = TestClient(app)
+            
+            # Test different sort options
+            sort_options = [
+                "created_desc", "created_asc", "title_asc", 
+                "title_desc", "votes_desc", "votes_asc"
+            ]
+            
+            for sort_option in sort_options:
+                response = client.get(f"/api/v1/polls/my-polls?sort={sort_option}", headers=auth_headers)
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert "items" in data
+                
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_my_polls_combined_filters(self, auth_headers):
+        """Test my polls with combined filters"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        
+        try:
+            client = TestClient(app)
+            
+            # Test combining multiple filters
+            response = client.get(
+                "/api/v1/polls/my-polls?page=1&size=5&search=test&is_active=true&sort=created_desc", 
+                headers=auth_headers
+            )
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["page"] == 1
+            assert data["size"] == 5
+            assert "items" in data
+            
+        finally:
+            app.dependency_overrides.clear()
 
 
 class TestPollManagement:

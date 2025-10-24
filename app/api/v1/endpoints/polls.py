@@ -12,8 +12,16 @@ from app.db.database import get_db
 from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
 from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse
+from app.schemas.common import PaginatedResponse
 from app.api.v1.endpoints.dependencies import get_current_user
 from app.core.constants import DatabaseConfig
+from app.api.v1.utils.pagination import (
+    PaginationParams, 
+    get_pagination_params,
+    create_paginated_response,
+    apply_search,
+    paginate_query
+)
 
 from app.schemas.error import (
     ValidationErrorResponse, 
@@ -270,11 +278,10 @@ def _validate_poll_business_rules(poll: PollCreate, current_user: User, db: Sess
             }
         )
 
-@router.get("/", response_model=PaginatedPollResponse)
+@router.get("/", response_model=PaginatedResponse[PollRead])
 def get_polls(
     db: Session = Depends(get_db),
-    page: int = Query(1, ge=1, description="Page number"),
-    size: int = Query(DatabaseConfig.DEFAULT_PAGE_SIZE, ge=1, le=DatabaseConfig.MAX_PAGE_SIZE, description="Items per page"),
+    pagination: PaginationParams = Depends(get_pagination_params),
     search: Optional[str] = Query(None, description="Search in poll titles"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     owner_id: Optional[int] = Query(None, description="Filter by owner ID"),
@@ -301,9 +308,6 @@ def get_polls(
         query = db.query(Poll)
         
         # Apply filters
-        if search:
-            query = query.filter(Poll.title.ilike(f"%{search}%"))
-        
         if is_active is not None:
             query = query.filter(Poll.is_active == is_active)
             
@@ -348,27 +352,16 @@ def get_polls(
         else:  # Default: CREATED_DESC
             query = query.order_by(Poll.pub_date.desc())
         
-        # Get total count before pagination
-        total = query.count()
-        
-        # Apply pagination
-        offset = (page - 1) * size
-        polls = query.offset(offset).limit(size).all()
-        
-        # Calculate pagination metadata
-        pages = math.ceil(total / size) if total > 0 else 1
-        has_next = page < pages
-        has_prev = page > 1
-        
-        return PaginatedPollResponse(
-            polls=polls,
-            total=total,
-            page=page,
-            size=size,
-            pages=pages,
-            has_next=has_next,
-            has_prev=has_prev
+        # Apply pagination and search using utilities
+        polls, total = paginate_query(
+            query,
+            pagination,
+            search_term=search,
+            search_fields=[Poll.title] if search else None
         )
+        
+        # Create paginated response using utility
+        return create_paginated_response(polls, total, pagination)
         
     except Exception as e:
         logger.error(f"Error retrieving polls: {str(e)}")
@@ -381,14 +374,96 @@ def get_polls(
         )
 
 
-@router.get("/my-polls", response_model=List[PollRead])
+@router.get("/my-polls", response_model=PaginatedResponse[PollRead])
 def get_my_polls(
     db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    pagination: PaginationParams = Depends(get_pagination_params),
+    search: Optional[str] = Query(None, description="Search in poll titles"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    sort: SortOption = Query(SortOption.CREATED_DESC, description="Sort order")
 ):
-    """Get all polls owned by the current user."""
-    polls = db.query(Poll).filter(Poll.owner_id == current_user.id).all()
-    return polls
+    """
+    Get paginated list of polls owned by the current user.
+    
+    - **page**: Page number (starts from 1)
+    - **size**: Number of polls per page (1-100)
+    - **search**: Search text in poll titles (case-insensitive)
+    - **is_active**: Filter by poll active status
+    - **sort**: Sort order options:
+        - created_desc: Newest first (default)
+        - created_asc: Oldest first
+        - title_asc: Title A-Z
+        - title_desc: Title Z-A
+        - votes_desc: Most voted first
+        - votes_asc: Least voted first
+    """
+    try:
+        # Build base query for user's polls
+        query = db.query(Poll).filter(Poll.owner_id == current_user.id)
+        
+        # Apply filters
+        if is_active is not None:
+            query = query.filter(Poll.is_active == is_active)
+        
+        # Apply sorting
+        if sort == SortOption.CREATED_ASC:
+            query = query.order_by(Poll.pub_date.asc())
+        elif sort == SortOption.TITLE_ASC:
+            query = query.order_by(Poll.title.asc())
+        elif sort == SortOption.TITLE_DESC:
+            query = query.order_by(Poll.title.desc())
+        elif sort == SortOption.VOTES_DESC:
+            # Count total votes for each poll and sort by that
+            subquery = (
+                db.query(
+                    PollOption.poll_id,
+                    func.sum(PollOption.vote_count).label('total_votes')
+                )
+                .group_by(PollOption.poll_id)
+                .subquery()
+            )
+            query = (
+                query.outerjoin(subquery, Poll.id == subquery.c.poll_id)
+                .order_by(func.coalesce(subquery.c.total_votes, 0).desc())
+            )
+        elif sort == SortOption.VOTES_ASC:
+            # Count total votes for each poll and sort by that
+            subquery = (
+                db.query(
+                    PollOption.poll_id,
+                    func.sum(PollOption.vote_count).label('total_votes')
+                )
+                .group_by(PollOption.poll_id)
+                .subquery()
+            )
+            query = (
+                query.outerjoin(subquery, Poll.id == subquery.c.poll_id)
+                .order_by(func.coalesce(subquery.c.total_votes, 0).asc())
+            )
+        else:  # Default: CREATED_DESC
+            query = query.order_by(Poll.pub_date.desc())
+        
+        # Apply pagination and search using utilities
+        polls, total = paginate_query(
+            query,
+            pagination,
+            search_term=search,
+            search_fields=[Poll.title] if search else None
+        )
+        
+        # Create paginated response using utility
+        return create_paginated_response(polls, total, pagination)
+        
+    except Exception as e:
+        logger.error(f"Error retrieving user polls: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": ErrorMessages.INTERNAL_ERROR,
+                "error_code": "USER_POLLS_RETRIEVAL_FAILED"
+            }
+        )
 
 @router.get("/{poll_id}", response_model=PollRead)
 def get_poll(poll_id: int, db: Session = Depends(get_db)):
