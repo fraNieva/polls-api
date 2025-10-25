@@ -709,6 +709,243 @@ class TestPollManagement:
         finally:
             app.dependency_overrides.clear()
 
+    def test_update_poll_duplicate_title_validation_success(self, auth_headers):
+        """Test updating poll title to same title succeeds (no duplicate check against itself)"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from datetime import datetime, timezone
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+            
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock existing poll with proper datetime
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.title = "Existing Poll"
+            mock_poll.description = "Test Description"
+            mock_poll.is_active = True
+            mock_poll.owner_id = 1
+            mock_poll.pub_date = datetime.now(timezone.utc)
+            
+            def mock_query_chain(*args, **kwargs):
+                if hasattr(mock_query_chain, 'call_count'):
+                    mock_query_chain.call_count += 1
+                else:
+                    mock_query_chain.call_count = 1
+                
+                mock_result = Mock()
+                if mock_query_chain.call_count == 1:
+                    # First query: get poll by ID
+                    mock_result.first.return_value = mock_poll
+                else:
+                    # Second query: check for duplicate title (should exclude current poll)
+                    mock_result.first.return_value = None  # No duplicate found
+                
+                return mock_result
+            
+            mock_db.query.return_value.filter = mock_query_chain
+            mock_db.commit = Mock()
+            mock_db.refresh = Mock()
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            update_data = {"title": "Existing Poll"}  # Same title as current
+            
+            response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
+            
+            # Should succeed - updating to same title is allowed (no duplicate because current poll excluded)
+            assert response.status_code == status.HTTP_200_OK
+                
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_update_poll_duplicate_title_conflict(self, auth_headers):
+        """Test updating poll title to existing title from another poll fails"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from datetime import datetime, timezone
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+            
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock the poll being updated
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.title = "Original Poll"
+            mock_poll.description = "Test Description"
+            mock_poll.is_active = True
+            mock_poll.owner_id = 1
+            mock_poll.pub_date = datetime.now(timezone.utc)
+            
+            # Mock existing poll with conflicting title
+            mock_existing_poll = Mock()
+            mock_existing_poll.id = 2
+            mock_existing_poll.title = "Conflicting Title"
+            mock_existing_poll.owner_id = 1
+            
+            def mock_query_chain(*args, **kwargs):
+                if hasattr(mock_query_chain, 'call_count'):
+                    mock_query_chain.call_count += 1
+                else:
+                    mock_query_chain.call_count = 1
+                
+                mock_result = Mock()
+                if mock_query_chain.call_count == 1:
+                    # First query: get poll by ID
+                    mock_result.first.return_value = mock_poll
+                else:
+                    # Second query: check for duplicate title
+                    mock_result.first.return_value = mock_existing_poll
+                
+                return mock_result
+            
+            mock_db.query.return_value.filter = mock_query_chain
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            update_data = {"title": "Conflicting Title"}
+            
+            response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
+            
+            # Should fail with conflict error
+            assert response.status_code == status.HTTP_409_CONFLICT
+            data = response.json()
+            assert data["error_code"] == "DUPLICATE_POLL_TITLE"
+            assert data["existing_poll_id"] == 2
+            assert data["poll_id"] == 1
+                
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_update_poll_no_title_update_no_duplicate_check(self, auth_headers):
+        """Test updating poll without title change skips duplicate validation"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from datetime import datetime, timezone
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+            
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock existing poll with proper datetime
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.title = "Existing Poll"
+            mock_poll.description = "Old Description"
+            mock_poll.is_active = True
+            mock_poll.owner_id = 1
+            mock_poll.pub_date = datetime.now(timezone.utc)
+            
+            # Mock query chain for getting the poll (only called once for poll lookup)
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_poll
+            mock_db.commit = Mock()
+            mock_db.refresh = Mock()
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            update_data = {"description": "New Description"}  # No title update
+            
+            response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
+            
+            # Should succeed - no duplicate check when title not updated
+            assert response.status_code == status.HTTP_200_OK
+                
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_update_poll_duplicate_title_different_user(self, auth_headers):
+        """Test updating poll title to title used by different user succeeds"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from datetime import datetime, timezone
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+            
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock the poll being updated
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.title = "Original Poll"
+            mock_poll.description = "Test Description"
+            mock_poll.is_active = True
+            mock_poll.owner_id = 1
+            mock_poll.pub_date = datetime.now(timezone.utc)
+            
+            def mock_query_chain(*args, **kwargs):
+                if hasattr(mock_query_chain, 'call_count'):
+                    mock_query_chain.call_count += 1
+                else:
+                    mock_query_chain.call_count = 1
+                
+                mock_result = Mock()
+                if mock_query_chain.call_count == 1:
+                    # First query: get poll by ID
+                    mock_result.first.return_value = mock_poll
+                else:
+                    # Second query: check for duplicate title (no match for same user)
+                    mock_result.first.return_value = None
+                
+                return mock_result
+            
+            mock_db.query.return_value.filter = mock_query_chain
+            mock_db.commit = Mock()
+            mock_db.refresh = Mock()
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            update_data = {"title": "Title Used By Other User"}
+            
+            response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
+            
+            # Should succeed - different user can have same title
+            assert response.status_code == status.HTTP_200_OK
+                
+        finally:
+            app.dependency_overrides.clear()
+
     def test_delete_poll_unauthorized(self, client):
         """Test deleting poll without authentication fails"""
         response = client.delete("/api/v1/polls/1")

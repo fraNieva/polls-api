@@ -639,9 +639,28 @@ def update_poll(
                 }
             )
         
-        # Update fields that were provided
+        # Check for duplicate titles only if title is being updated
         update_data = poll_update.model_dump(exclude_unset=True)
-        
+        if 'title' in update_data and update_data['title'] is not None:
+            existing_poll = db.query(Poll).filter(
+                Poll.title == update_data['title'].strip(),
+                Poll.owner_id == current_user.id,
+                Poll.id != poll_id  # Exclude the current poll from duplicate check
+            ).first()
+            
+            if existing_poll:
+                logger.warning(f"User {current_user.id} attempted to update poll {poll_id} with duplicate title: '{update_data['title']}'")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "message": "A poll with this title already exists",
+                        "error_code": "DUPLICATE_POLL_TITLE",
+                        "existing_poll_id": existing_poll.id,
+                        "poll_id": poll_id
+                    }
+                )
+
+        # Update fields that were provided
         if not update_data:
             logger.info(f"No fields to update for poll {poll_id}")
             return poll  # No changes requested
