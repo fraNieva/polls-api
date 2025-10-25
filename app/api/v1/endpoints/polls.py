@@ -660,18 +660,38 @@ def update_poll(
                     }
                 )
 
-        # Update fields that were provided
+        # Update fields that were provided with change detection
         if not update_data:
             logger.info(f"No fields to update for poll {poll_id}")
             return poll  # No changes requested
         
-        for field, value in update_data.items():
-            setattr(poll, field, value)
+        # Track changes for better logging and performance
+        changes_made = False
+        changed_fields = []
         
-        db.commit()
-        db.refresh(poll)
+        for field, new_value in update_data.items():
+            current_value = getattr(poll, field)
+            
+            # Handle string fields with proper comparison (strip whitespace)
+            if field in ['title', 'description'] and isinstance(new_value, str):
+                new_value = new_value.strip()
+                current_value = current_value.strip() if current_value else None
+            
+            # Only update if the value is actually different
+            if current_value != new_value:
+                setattr(poll, field, new_value)
+                changes_made = True
+                changed_fields.append(field)
+                logger.debug(f"Field '{field}' changed from '{current_value}' to '{new_value}'")
         
-        logger.info(f"Poll updated successfully: ID {poll.id}, Fields: {list(update_data.keys())}")
+        # Only commit if actual changes were made
+        if changes_made:
+            db.commit()
+            db.refresh(poll)
+            logger.info(f"Poll updated successfully: ID {poll.id}, Changed fields: {changed_fields}")
+        else:
+            logger.info(f"No changes detected for poll {poll_id} - all provided values match current values")
+        
         return poll
         
     except HTTPException:

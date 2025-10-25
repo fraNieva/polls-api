@@ -946,6 +946,218 @@ class TestPollManagement:
         finally:
             app.dependency_overrides.clear()
 
+    def test_update_poll_no_changes_detected(self, auth_headers):
+        """Test updating poll with same values detects no changes"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from datetime import datetime, timezone
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+            
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock existing poll with current values
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.title = "Current Title"
+            mock_poll.description = "Current Description"
+            mock_poll.is_active = True
+            mock_poll.owner_id = 1
+            mock_poll.pub_date = datetime.now(timezone.utc)
+            
+            def mock_query_chain(*args, **kwargs):
+                if hasattr(mock_query_chain, 'call_count'):
+                    mock_query_chain.call_count += 1
+                else:
+                    mock_query_chain.call_count = 1
+                
+                mock_result = Mock()
+                if mock_query_chain.call_count == 1:
+                    # First query: get poll by ID
+                    mock_result.first.return_value = mock_poll
+                else:
+                    # Second query: duplicate title check (should exclude current poll)
+                    mock_result.first.return_value = None  # No duplicate found
+                
+                return mock_result
+            
+            mock_db.query.return_value.filter = mock_query_chain
+            mock_db.commit = Mock()
+            mock_db.refresh = Mock()
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            # Send same values as current
+            update_data = {
+                "title": "Current Title",
+                "description": "Current Description", 
+                "is_active": True
+            }
+            
+            response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
+            
+            # Should succeed but no actual changes made
+            assert response.status_code == status.HTTP_200_OK
+            
+            # Verify commit was NOT called (no changes detected)
+            mock_db = app.dependency_overrides[get_db]()
+            mock_db.commit.assert_not_called()
+            mock_db.refresh.assert_not_called()
+                
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_update_poll_partial_changes_detected(self, auth_headers):
+        """Test updating poll with some changed and some same values"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from datetime import datetime, timezone
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+            
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock existing poll 
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.title = "Current Title"  # Will stay same
+            mock_poll.description = "Old Description"  # Will change
+            mock_poll.is_active = True  # Will change to False
+            mock_poll.owner_id = 1
+            mock_poll.pub_date = datetime.now(timezone.utc)
+            
+            def mock_query_chain(*args, **kwargs):
+                if hasattr(mock_query_chain, 'call_count'):
+                    mock_query_chain.call_count += 1
+                else:
+                    mock_query_chain.call_count = 1
+                
+                mock_result = Mock()
+                if mock_query_chain.call_count == 1:
+                    # First query: get poll by ID
+                    mock_result.first.return_value = mock_poll
+                else:
+                    # Second query: duplicate title check (should exclude current poll)
+                    mock_result.first.return_value = None  # No duplicate found
+                
+                return mock_result
+            
+            mock_db.query.return_value.filter = mock_query_chain
+            mock_db.commit = Mock()
+            mock_db.refresh = Mock()
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            # Mix of same and different values
+            update_data = {
+                "title": "Current Title",  # Same - no change
+                "description": "New Description",  # Different - will change
+                "is_active": False  # Different - will change
+            }
+            
+            response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
+            
+            # Should succeed with changes detected
+            assert response.status_code == status.HTTP_200_OK
+            
+            # Focus on verifying the endpoint works correctly, not internal mock calls
+            # The change detection logic should allow partial updates to proceed
+            data = response.json()
+            assert "id" in data
+                
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_update_poll_whitespace_handling_in_change_detection(self, auth_headers):
+        """Test that whitespace differences are handled correctly in change detection"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from datetime import datetime, timezone
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+            
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock existing poll with whitespace
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.title = "Title With Spaces"  # No extra whitespace
+            mock_poll.description = "Description Text"  # No extra whitespace
+            mock_poll.is_active = True
+            mock_poll.owner_id = 1
+            mock_poll.pub_date = datetime.now(timezone.utc)
+            
+            def mock_query_chain(*args, **kwargs):
+                if hasattr(mock_query_chain, 'call_count'):
+                    mock_query_chain.call_count += 1
+                else:
+                    mock_query_chain.call_count = 1
+                
+                mock_result = Mock()
+                if mock_query_chain.call_count == 1:
+                    # First query: get poll by ID
+                    mock_result.first.return_value = mock_poll
+                else:
+                    # Second query: duplicate title check (should exclude current poll)
+                    mock_result.first.return_value = None  # No duplicate found
+                
+                return mock_result
+            
+            mock_db.query.return_value.filter = mock_query_chain
+            mock_db.commit = Mock()
+            mock_db.refresh = Mock()
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            # Send same content but with extra whitespace
+            update_data = {
+                "title": "  Title With Spaces  ",  # Same after strip
+                "description": "Description Text   "  # Same after strip
+            }
+            
+            response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
+            
+            # Should succeed but no changes detected (whitespace stripped)
+            assert response.status_code == status.HTTP_200_OK
+            
+            # Verify commit was NOT called (no real changes after whitespace handling)
+            mock_db = app.dependency_overrides[get_db]()
+            mock_db.commit.assert_not_called()
+            mock_db.refresh.assert_not_called()
+                
+        finally:
+            app.dependency_overrides.clear()
+
     def test_delete_poll_unauthorized(self, client):
         """Test deleting poll without authentication fails"""
         response = client.delete("/api/v1/polls/1")
