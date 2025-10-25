@@ -473,7 +473,134 @@ def get_poll(poll_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
     return poll
 
-@router.put("/{poll_id}", response_model=PollRead)
+@router.put(
+    "/{poll_id}", 
+    response_model=PollRead,
+    summary="Update an existing poll",
+    description="Update a poll's title, description, or active status. Only the poll owner can update their polls.",
+    responses={
+        200: {
+            "description": "Poll updated successfully",
+            "model": PollRead,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": 1,
+                        "title": "Updated Poll Title",
+                        "description": "Updated description",
+                        "is_active": True,
+                        "owner_id": 1,
+                        "pub_date": "2024-01-01T12:00:00Z"
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Business logic error",
+            "model": BusinessErrorResponse,
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "duplicate_title": {
+                            "summary": "Duplicate poll title",
+                            "value": {
+                                "message": "A poll with this title already exists",
+                                "error_code": "DUPLICATE_POLL_TITLE",
+                                "details": {"existing_poll_id": 123, "poll_id": 1},
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/1"
+                            }
+                        },
+                        "integrity_error": {
+                            "summary": "Database integrity constraint violated",
+                            "value": {
+                                "message": "Data integrity constraint violated",
+                                "error_code": "INTEGRITY_ERROR",
+                                "hint": "Check for duplicate values or invalid references",
+                                "poll_id": 1,
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/1"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required",
+            "model": AuthErrorResponse
+        },
+        403: {
+            "description": "Access forbidden - not poll owner",
+            "model": AuthErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Not authorized to update this poll",
+                        "error_code": "NOT_AUTHORIZED_UPDATE",
+                        "poll_id": 1,
+                        "owner_id": 2,
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/1"
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Poll not found",
+            "model": BusinessErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Poll not found",
+                        "error_code": "POLL_NOT_FOUND",
+                        "poll_id": 999,
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/999"
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Validation error",
+            "model": ValidationErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Validation failed",
+                        "error_code": "VALIDATION_ERROR",
+                        "errors": [
+                            {
+                                "loc": ["title"],
+                                "msg": "ensure this value has at least 5 characters",
+                                "type": "value_error.any_str.min_length",
+                                "ctx": {"limit_value": 5}
+                            }
+                        ],
+                        "poll_id": 1,
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/1"
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ServerErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "An unexpected error occurred",
+                        "error_code": "INTERNAL_ERROR",
+                        "poll_id": 1,
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/1"
+                    }
+                }
+            }
+        }
+    }
+)
 def update_poll(
     poll_id: int,
     poll_update: PollUpdate,
@@ -481,25 +608,105 @@ def update_poll(
     current_user: User = Depends(get_current_user)
 ):
     """Update a poll. Only the owner can update their polls."""
-    poll = db.query(Poll).filter(Poll.id == poll_id).first()
-    if not poll:
-        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
     
-    # Check if the current user is the owner
-    if poll.owner_id != current_user.id:
+    try:
+        # Log poll update attempt
+        logger.info(f"User {current_user.id} attempting to update poll ID: {poll_id}")
+        
+        # Get the poll
+        poll = db.query(Poll).filter(Poll.id == poll_id).first()
+        if not poll:
+            logger.warning(f"Poll not found: ID {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "message": ErrorMessages.POLL_NOT_FOUND,
+                    "error_code": "POLL_NOT_FOUND",
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Check if the current user is the owner
+        if poll.owner_id != current_user.id:
+            logger.warning(f"User {current_user.id} attempted to update poll {poll_id} owned by user {poll.owner_id}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "message": ErrorMessages.NOT_AUTHORIZED_UPDATE,
+                    "error_code": "NOT_AUTHORIZED_UPDATE",
+                    "poll_id": poll_id,
+                    "owner_id": poll.owner_id
+                }
+            )
+        
+        # Update fields that were provided
+        update_data = poll_update.model_dump(exclude_unset=True)
+        
+        if not update_data:
+            logger.info(f"No fields to update for poll {poll_id}")
+            return poll  # No changes requested
+        
+        for field, value in update_data.items():
+            setattr(poll, field, value)
+        
+        db.commit()
+        db.refresh(poll)
+        
+        logger.info(f"Poll updated successfully: ID {poll.id}, Fields: {list(update_data.keys())}")
+        return poll
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (they're already properly formatted)
+        raise
+        
+    except ValidationError as e:
+        logger.error(f"Validation error updating poll {poll_id}: {e}")
         raise HTTPException(
-            status_code=403, 
-            detail=ErrorMessages.NOT_AUTHORIZED_UPDATE
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Validation failed",
+                "error_code": "VALIDATION_ERROR",
+                "errors": e.errors(),
+                "poll_id": poll_id
+            }
         )
-    
-    # Update fields that were provided
-    update_data = poll_update.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(poll, field, value)
-    
-    db.commit()
-    db.refresh(poll)
-    return poll
+        
+    except IntegrityError as e:
+        logger.error(f"Database integrity error updating poll {poll_id}: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Data integrity constraint violated",
+                "error_code": "INTEGRITY_ERROR",
+                "hint": "Check for duplicate values or invalid references",
+                "poll_id": poll_id
+            }
+        )
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Database error updating poll {poll_id}: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "Database operation failed",
+                "error_code": "DATABASE_ERROR",
+                "poll_id": poll_id
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Unexpected error updating poll {poll_id}: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "An unexpected error occurred",
+                "error_code": "INTERNAL_ERROR",
+                "poll_id": poll_id
+            }
+        )
 
 @router.delete("/{poll_id}")
 def delete_poll(
