@@ -302,7 +302,114 @@ def _validate_poll_business_rules(current_user: User, db: Session, operation: st
                 }
             )
 
-@router.get("/", response_model=PaginatedResponse[PollRead])
+@router.get(
+    "/", 
+    response_model=PaginatedResponse[PollRead],
+    summary="Get paginated list of polls",
+    description="Retrieve polls with filtering, sorting, and pagination options. Public endpoint accessible to all users.",
+    responses={
+        200: {
+            "description": "Polls retrieved successfully",
+            "model": PaginatedResponse[PollRead],
+            "content": {
+                "application/json": {
+                    "example": {
+                        "items": [
+                            {
+                                "id": 1,
+                                "title": "Favorite Programming Language",
+                                "description": "Vote for your preferred language",
+                                "is_active": True,
+                                "owner_id": 1,
+                                "pub_date": "2024-01-01T12:00:00Z",
+                                "options": []
+                            }
+                        ],
+                        "total": 1,
+                        "page": 1,
+                        "size": 10,
+                        "pages": 1
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Validation error",
+            "model": ValidationErrorResponse,
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "invalid_page": {
+                            "summary": "Invalid page parameter",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["query", "page"],
+                                        "msg": "ensure this value is greater than 0",
+                                        "type": "value_error.number.not_gt",
+                                        "ctx": {"limit_value": 0}
+                                    }
+                                ],
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/"
+                            }
+                        },
+                        "invalid_sort": {
+                            "summary": "Invalid sort parameter",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["query", "sort"],
+                                        "msg": "value is not a valid enumeration member",
+                                        "type": "type_error.enum",
+                                        "ctx": {"enum_values": ["created_desc", "created_asc", "title_asc", "title_desc", "votes_desc", "votes_asc"]}
+                                    }
+                                ],
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/"
+                            }
+                        },
+                        "invalid_size": {
+                            "summary": "Invalid page size parameter",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["query", "size"],
+                                        "msg": "ensure this value is less than or equal to 100",
+                                        "type": "value_error.number.not_le",
+                                        "ctx": {"limit_value": 100}
+                                    }
+                                ],
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ServerErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "An unexpected error occurred",
+                        "error_code": "POLL_RETRIEVAL_FAILED",
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/"
+                    }
+                }
+            }
+        }
+    }
+)
 def get_polls(
     db: Session = Depends(get_db),
     pagination: PaginationParams = Depends(get_pagination_params),
@@ -398,7 +505,139 @@ def get_polls(
         )
 
 
-@router.get("/my-polls", response_model=PaginatedResponse[PollRead])
+@router.get(
+    "/my-polls", 
+    response_model=PaginatedResponse[PollRead],
+    summary="Get user's own polls",
+    description="Retrieve paginated list of polls owned by the authenticated user with filtering and sorting options.",
+    responses={
+        200: {
+            "description": "User polls retrieved successfully",
+            "model": PaginatedResponse[PollRead],
+            "content": {
+                "application/json": {
+                    "example": {
+                        "items": [
+                            {
+                                "id": 1,
+                                "title": "My Programming Poll",
+                                "description": "A poll I created about programming languages",
+                                "is_active": True,
+                                "owner_id": 1,
+                                "pub_date": "2024-01-01T12:00:00Z",
+                                "options": [
+                                    {
+                                        "id": 1,
+                                        "text": "Python",
+                                        "vote_count": 5
+                                    },
+                                    {
+                                        "id": 2,
+                                        "text": "JavaScript",
+                                        "vote_count": 3
+                                    }
+                                ]
+                            }
+                        ],
+                        "total": 1,
+                        "page": 1,
+                        "size": 10,
+                        "pages": 1
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required",
+            "model": AuthErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Authentication required",
+                        "error_code": "AUTHENTICATION_REQUIRED",
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/my-polls"
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Validation error",
+            "model": ValidationErrorResponse,
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "invalid_page": {
+                            "summary": "Invalid page parameter",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["query", "page"],
+                                        "msg": "ensure this value is greater than 0",
+                                        "type": "value_error.number.not_gt",
+                                        "ctx": {"limit_value": 0}
+                                    }
+                                ],
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/my-polls"
+                            }
+                        },
+                        "invalid_sort": {
+                            "summary": "Invalid sort parameter",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["query", "sort"],
+                                        "msg": "value is not a valid enumeration member",
+                                        "type": "type_error.enum",
+                                        "ctx": {"enum_values": ["created_desc", "created_asc", "title_asc", "title_desc", "votes_desc", "votes_asc"]}
+                                    }
+                                ],
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/my-polls"
+                            }
+                        },
+                        "invalid_size": {
+                            "summary": "Invalid page size parameter",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["query", "size"],
+                                        "msg": "ensure this value is less than or equal to 100",
+                                        "type": "value_error.number.not_le",
+                                        "ctx": {"limit_value": 100}
+                                    }
+                                ],
+                                "timestamp": "2024-01-01T12:00:00Z",
+                                "path": "/api/v1/polls/my-polls"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ServerErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "An unexpected error occurred",
+                        "error_code": "USER_POLLS_RETRIEVAL_FAILED",
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "path": "/api/v1/polls/my-polls"
+                    }
+                }
+            }
+        }
+    }
+)
 def get_my_polls(
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user),
