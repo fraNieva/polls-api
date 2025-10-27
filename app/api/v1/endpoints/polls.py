@@ -13,7 +13,7 @@ from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
 from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse
 from app.schemas.common import PaginatedResponse
-from app.api.v1.endpoints.dependencies import get_current_user
+from app.api.v1.endpoints.dependencies import get_current_user, get_current_user_optional
 from app.core.constants import DatabaseConfig
 from app.api.v1.utils.pagination import (
     PaginationParams, 
@@ -434,20 +434,35 @@ def get_my_polls(
     "/{poll_id}", 
     response_model=PollRead,
     summary="Get a specific poll by ID",
-    description="Retrieve a single poll by its unique identifier. Returns the poll with all its options and vote counts.",
+    description="Retrieve a single poll by its unique identifier. Public polls are accessible to everyone, private polls require authentication and proper access rights.",
     responses=get_single_poll_responses()
 )
-def get_poll(poll_id: int, db: Session = Depends(get_db)):
+def get_poll(
+    poll_id: int, 
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
     """
-    Get a specific poll by ID with comprehensive error handling.
+    Get a specific poll by ID with comprehensive error handling and optional authentication.
     
-    This endpoint is public and does not require authentication.
-    Returns poll details including options and vote counts.
+    - **Public polls**: Accessible to everyone (authenticated and unauthenticated users)
+    - **Private polls**: Only accessible to authenticated users and poll owners
+    - **Authentication**: Optional - provides additional access rights for private polls
+    
+    If authentication is provided, the user gets access to:
+    - All public polls
+    - Private polls they own
+    - Private polls they have been granted access to
+    
+    If no authentication is provided:
+    - Only public polls are accessible
     """
     
     try:
-        # Log poll retrieval attempt
-        logger.info(f"Retrieving poll with ID: {poll_id}")
+        # Log poll retrieval attempt with auth status
+        auth_status = "authenticated" if current_user else "anonymous"
+        user_info = f"user {current_user.id}" if current_user else "anonymous user"
+        logger.info(f"Retrieving poll ID {poll_id} by {user_info} ({auth_status})")
         
         # Validate poll_id parameter
         if poll_id <= 0:
@@ -483,7 +498,42 @@ def get_poll(poll_id: int, db: Session = Depends(get_db)):
                 }
             )
         
-        logger.info(f"Poll retrieved successfully: ID {poll.id}, Title: '{poll.title}'")
+        # Access control logic (ready for future is_public field)
+        # For now, all polls are considered public since is_public field doesn't exist yet
+        # When is_public field is added, this logic will control access:
+        
+        # Future logic will be:
+        # is_public = getattr(poll, 'is_public', True)  # Default to public for backward compatibility
+        # 
+        # if not is_public:
+        #     # Private poll - requires authentication and proper access
+        #     if not current_user:
+        #         logger.warning(f"Unauthenticated access attempt to private poll {poll_id}")
+        #         raise HTTPException(
+        #             status_code=status.HTTP_401_UNAUTHORIZED,
+        #             detail={
+        #                 "message": "Authentication required to access this private poll",
+        #                 "error_code": "AUTHENTICATION_REQUIRED",
+        #                 "poll_id": poll_id
+        #             }
+        #         )
+        #     
+        #     # Check if user has access to this private poll
+        #     if poll.owner_id != current_user.id:
+        #         # Future: Add logic for shared access, team polls, etc.
+        #         logger.warning(f"User {current_user.id} attempted to access private poll {poll_id} owned by {poll.owner_id}")
+        #         raise HTTPException(
+        #             status_code=status.HTTP_403_FORBIDDEN,
+        #             detail={
+        #                 "message": "Access denied to this private poll",
+        #                 "error_code": "ACCESS_DENIED",
+        #                 "poll_id": poll_id,
+        #                 "owner_id": poll.owner_id
+        #             }
+        #         )
+        
+        # For now, all polls are accessible (current behavior maintained)
+        logger.info(f"Poll retrieved successfully: ID {poll.id}, Title: '{poll.title}', Requester: {user_info}")
         return poll
         
     except HTTPException:

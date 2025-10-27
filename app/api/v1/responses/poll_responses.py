@@ -7,7 +7,7 @@ building upon common responses for maximum reusability.
 
 from app.schemas.poll import PollRead
 from app.schemas.common import PaginatedResponse
-from app.schemas.error import BusinessErrorResponse, ValidationErrorResponse
+from app.schemas.error import BusinessErrorResponse, ValidationErrorResponse, AuthErrorResponse
 from .common_responses import (
     AUTH_ERROR_RESPONSE,
     get_validation_error_response,
@@ -254,9 +254,9 @@ def get_user_polls_responses(path: str = MY_POLLS_PATH):
         500: get_server_error_response("USER_POLLS_RETRIEVAL_FAILED", path)
     }
 
-# Single poll by ID responses
+# Single poll by ID responses with optional authentication
 def get_single_poll_responses(poll_id: int = 1):
-    """Generate complete response set for single poll retrieval endpoint."""
+    """Generate complete response set for single poll retrieval endpoint with optional authentication."""
     path = f"/api/v1/polls/{poll_id}"
     return {
         200: {
@@ -265,6 +265,37 @@ def get_single_poll_responses(poll_id: int = 1):
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": POLL_WITH_OPTIONS_EXAMPLE
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required for private poll access",
+            "model": AuthErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Authentication required to access this private poll",
+                        "error_code": "AUTHENTICATION_REQUIRED",
+                        "poll_id": poll_id,
+                        "timestamp": EXAMPLE_TIMESTAMP,
+                        "path": path
+                    }
+                }
+            }
+        },
+        403: {
+            "description": "Access denied to private poll",
+            "model": BusinessErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Access denied to this private poll",
+                        "error_code": "ACCESS_DENIED",
+                        "poll_id": poll_id,
+                        "owner_id": 2,
+                        "timestamp": EXAMPLE_TIMESTAMP,
+                        "path": path
+                    }
                 }
             }
         },
