@@ -11,7 +11,7 @@ import math
 from app.db.database import get_db
 from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
-from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse
+from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse, PollOptionCreate, PollOptionResponse
 from app.schemas.common import PaginatedResponse
 from app.api.v1.endpoints.dependencies import get_current_user, get_current_user_optional
 from app.core.constants import DatabaseConfig
@@ -29,7 +29,8 @@ from app.api.v1.responses import (
     get_user_polls_responses,
     get_poll_update_responses,
     get_single_poll_responses,
-    get_poll_delete_responses
+    get_poll_delete_responses,
+    get_poll_option_create_responses
 )
 from app.api.v1.responses.common_responses import VALIDATION_FAILED_MESSAGE
 
@@ -824,35 +825,205 @@ def delete_poll(
             }
         )
 
-@router.post("/{poll_id}/options", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{poll_id}/options", 
+    response_model=PollOptionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add option to poll",
+    description="Add a new option to an existing poll. Only the poll owner can add options. The poll must be active.",
+    responses=get_poll_option_create_responses()
+)
 def add_poll_option(
     poll_id: int,
-    option_text: str,
+    option_data: PollOptionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Add an option to a poll. Only the poll owner can add options."""
-    poll = db.query(Poll).filter(Poll.id == poll_id).first()
-    if not poll:
-        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
+    """
+    Add a new option to a poll with comprehensive validation and error handling.
     
-    # Check if the current user is the owner
-    if poll.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=403, 
-            detail=ErrorMessages.NOT_AUTHORIZED_ADD_OPTIONS
+    Only the poll owner can add options to their polls. The poll must be active
+    and must not exceed the maximum number of options allowed.
+    
+    - **poll_id**: The unique identifier of the poll to add an option to
+    - **option_data**: The option data including text content
+    - **Authentication**: Required - only authenticated users can add options
+    - **Authorization**: Only poll owners can add options to their polls
+    """
+    
+    try:
+        # Log poll option creation attempt
+        logger.info(f"User {current_user.id} attempting to add option to poll ID: {poll_id}, text: '{option_data.text}'")
+        
+        # Validate poll_id parameter
+        if poll_id <= 0:
+            logger.warning(f"Invalid poll ID provided for option creation: {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": VALIDATION_FAILED_MESSAGE,
+                    "error_code": "VALIDATION_ERROR",
+                    "errors": [
+                        {
+                            "loc": ["path", "poll_id"],
+                            "msg": "Poll ID must be greater than 0",
+                            "type": "value_error.number.not_gt",
+                            "ctx": {"limit_value": 0}
+                        }
+                    ],
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Get the poll with validation
+        poll = db.query(Poll).filter(Poll.id == poll_id).first()
+        if not poll:
+            logger.warning(f"Poll not found for option creation: ID {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "message": ErrorMessages.POLL_NOT_FOUND,
+                    "error_code": "POLL_NOT_FOUND",
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Check if the current user is the owner
+        if poll.owner_id != current_user.id:
+            logger.warning(f"User {current_user.id} attempted to add option to poll {poll_id} owned by user {poll.owner_id}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "message": ErrorMessages.NOT_AUTHORIZED_ADD_OPTIONS,
+                    "error_code": "INSUFFICIENT_PERMISSIONS",
+                    "poll_id": poll_id,
+                    "owner_id": poll.owner_id
+                }
+            )
+        
+        # Check if poll is active
+        if not poll.is_active:
+            logger.warning(f"Attempt to add option to inactive poll {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": "Cannot add options to an inactive poll",
+                    "error_code": "POLL_INACTIVE",
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Check if maximum options limit would be exceeded
+        current_option_count = db.query(PollOption).filter(PollOption.poll_id == poll_id).count()
+        if current_option_count >= BusinessLimits.MAX_POLL_OPTIONS:
+            logger.warning(f"Maximum options limit exceeded for poll {poll_id}: current count {current_option_count}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": f"Maximum number of options for this poll exceeded ({BusinessLimits.MAX_POLL_OPTIONS})",
+                    "error_code": "MAX_OPTIONS_EXCEEDED",
+                    "poll_id": poll_id,
+                    "current_count": current_option_count,
+                    "max_allowed": BusinessLimits.MAX_POLL_OPTIONS
+                }
+            )
+        
+        # Check for duplicate option text (case-insensitive)
+        existing_option = db.query(PollOption).filter(
+            PollOption.poll_id == poll_id,
+            func.lower(PollOption.text) == func.lower(option_data.text.strip())
+        ).first()
+        
+        if existing_option:
+            logger.warning(f"Duplicate option text for poll {poll_id}: '{option_data.text}'")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": "An option with this text already exists for this poll",
+                    "error_code": "DUPLICATE_POLL_OPTION",
+                    "poll_id": poll_id,
+                    "existing_option_text": existing_option.text
+                }
+            )
+        
+        # Create the new poll option
+        poll_option = PollOption(
+            poll_id=poll_id,
+            text=option_data.text.strip(),
+            vote_count=0  # Initialize vote count
         )
-    
-    # Create the new option
-    poll_option = PollOption(
-        poll_id=poll_id,
-        text=option_text
-    )
-    db.add(poll_option)
-    db.commit()
-    db.refresh(poll_option)
-    
-    return {"message": "Option added successfully", "option_id": poll_option.id, "text": option_text}
+        
+        db.add(poll_option)
+        db.commit()
+        db.refresh(poll_option)
+        
+        logger.info(f"Poll option created successfully: ID {poll_option.id}, Poll ID: {poll_id}, Text: '{poll_option.text}'")
+        
+        # Return structured response
+        return {
+            "message": "Poll option added successfully",
+            "option": {
+                "id": poll_option.id,
+                "text": poll_option.text,
+                "vote_count": poll_option.vote_count,
+                "poll_id": poll_id
+            },
+            "poll_id": poll_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (they're already properly formatted)
+        raise
+        
+    except ValidationError as e:
+        logger.error(f"Validation error creating poll option for poll {poll_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Validation failed",
+                "error_code": "VALIDATION_ERROR",
+                "errors": e.errors(),
+                "poll_id": poll_id
+            }
+        )
+        
+    except IntegrityError as e:
+        logger.error(f"Database integrity error creating poll option for poll {poll_id}: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Data integrity constraint violated",
+                "error_code": "INTEGRITY_ERROR",
+                "hint": "Check for duplicate values or invalid references",
+                "poll_id": poll_id
+            }
+        )
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Database error creating poll option for poll {poll_id}: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "Database operation failed",
+                "error_code": "DATABASE_ERROR",
+                "poll_id": poll_id
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Unexpected error creating poll option for poll {poll_id}: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "An unexpected error occurred while creating the poll option",
+                "error_code": "POLL_OPTION_CREATION_FAILED",
+                "poll_id": poll_id
+            }
+        )
 
 @router.post('/{poll_id}/vote/{option_id}', status_code=status.HTTP_200_OK)
 def vote_poll(

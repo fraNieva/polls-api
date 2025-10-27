@@ -81,7 +81,8 @@ class BusinessLimits:
     MAX_POLL_DESCRIPTION_LENGTH = 1000
     MIN_POLL_OPTIONS = 2
     MAX_POLL_OPTIONS = 10
-    MAX_OPTION_TEXT_LENGTH = 100
+    MAX_POLL_OPTION_LENGTH = 100  # Individual option text length
+    MAX_OPTION_TEXT_LENGTH = 100  # Keep for backward compatibility
     
     # Rate limits for poll operations
     POLL_CREATION_RATE_LIMIT = "5/hour"

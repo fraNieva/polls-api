@@ -156,6 +156,68 @@ class PollUpdate(BaseModel):
         v = ' '.join(v.split()) if v.strip() else None
         return v
 
+# Poll Option Schemas
+class PollOptionCreate(BaseModel):
+    """Schema for creating a new poll option"""
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=BusinessLimits.MAX_POLL_OPTION_LENGTH,
+        description=f'Poll option text (1-{BusinessLimits.MAX_POLL_OPTION_LENGTH} characters)',
+        example="Python"
+    )
+    
+    @field_validator('text')
+    def validate_text(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Option text cannot be empty or just whitespace')
+        
+        # Remove excessive whitespace
+        v = ' '.join(v.split())
+        
+        # Check for inappropriate content (basic example)
+        forbidden_words = ['spam', 'test123', 'abuse']
+        if any(word.lower() in v.lower() for word in forbidden_words):
+            raise ValueError('Option text contains inappropriate content')
+        
+        # Must contain at least one letter or number
+        if not re.search(r'[a-zA-Z0-9]', v):
+            raise ValueError('Option text must contain at least one letter or number')
+            
+        return v
+
+class PollOptionRead(BaseModel):
+    """Schema for reading poll option data"""
+    id: int
+    text: str
+    vote_count: int = Field(default=0, description="Number of votes for this option")
+    poll_id: int
+    
+    class Config:
+        from_attributes = True
+
+class PollOptionResponse(BaseModel):
+    """Schema for poll option creation response"""
+    message: str = Field(..., description="Success message")
+    option: PollOptionRead = Field(..., description="The created poll option")
+    poll_id: int = Field(..., description="ID of the poll the option was added to")
+    timestamp: str = Field(..., description="Timestamp of option creation")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "message": "Poll option added successfully",
+                "option": {
+                    "id": 123,
+                    "text": "Python",
+                    "vote_count": 0,
+                    "poll_id": 1
+                },
+                "poll_id": 1,
+                "timestamp": "2024-01-01T12:00:00Z"
+            }
+        }
+
 
 # Enhanced response schemas for paginated endpoints
 class PaginationMeta(BaseModel):

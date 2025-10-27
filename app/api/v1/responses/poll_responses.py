@@ -405,3 +405,157 @@ POLL_ERROR_RESPONSES = {
     422: get_poll_validation_response(POLLS_BASE_PATH),
     500: get_server_error_response()
 }
+
+# =============================================================================
+# Poll Option Response Definitions
+# =============================================================================
+
+def get_poll_option_create_responses(poll_id: int = 1):
+    """Generate complete response set for poll option creation endpoint."""
+    path = f"/api/v1/polls/{poll_id}/options"
+    
+    return {
+        201: {
+            "description": "Poll option created successfully",
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Poll option added successfully",
+                        "option": {
+                            "id": 123,
+                            "text": "Python",
+                            "vote_count": 0,
+                            "poll_id": poll_id
+                        },
+                        "poll_id": poll_id,
+                        "timestamp": EXAMPLE_TIMESTAMP
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Business logic error",
+            "model": BusinessErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "examples": {
+                        "duplicate_option": {
+                            "summary": "Duplicate option text",
+                            "value": {
+                                "message": "An option with this text already exists for this poll",
+                                "error_code": "DUPLICATE_POLL_OPTION",
+                                "poll_id": poll_id,
+                                "existing_option_text": "Python",
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "too_many_options": {
+                            "summary": "Maximum options exceeded",
+                            "value": {
+                                "message": "Maximum number of options for this poll exceeded (10)",
+                                "error_code": "MAX_OPTIONS_EXCEEDED",
+                                "poll_id": poll_id,
+                                "current_count": 10,
+                                "max_allowed": 10,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "poll_inactive": {
+                            "summary": "Poll is not active",
+                            "value": {
+                                "message": "Cannot add options to an inactive poll",
+                                "error_code": "POLL_INACTIVE",
+                                "poll_id": poll_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        401: AUTH_ERROR_RESPONSE,
+        403: {
+            "description": "Access denied - not poll owner",
+            "model": AuthErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "You can only add options to your own polls",
+                        "error_code": "INSUFFICIENT_PERMISSIONS",
+                        "poll_id": poll_id,
+                        "owner_id": 2,
+                        "timestamp": EXAMPLE_TIMESTAMP,
+                        "path": path
+                    }
+                }
+            }
+        },
+        404: get_poll_not_found_response(path),
+        422: {
+            "description": "Validation error",
+            "model": ValidationErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "examples": {
+                        "invalid_poll_id": {
+                            "summary": "Invalid poll ID format",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["path", "poll_id"],
+                                        "msg": "Poll ID must be greater than 0",
+                                        "type": "value_error.number.not_gt",
+                                        "ctx": {"limit_value": 0}
+                                    }
+                                ],
+                                "poll_id": poll_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "empty_option_text": {
+                            "summary": "Empty option text",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["body", "text"],
+                                        "msg": "Option text cannot be empty or just whitespace",
+                                        "type": "value_error"
+                                    }
+                                ],
+                                "poll_id": poll_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "option_too_long": {
+                            "summary": "Option text too long",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["body", "text"],
+                                        "msg": "Option text must be at most 100 characters long",
+                                        "type": "value_error.any_str.max_length",
+                                        "ctx": {"limit_value": 100}
+                                    }
+                                ],
+                                "poll_id": poll_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        500: get_server_error_response("POLL_OPTION_CREATION_FAILED", path)
+    }
