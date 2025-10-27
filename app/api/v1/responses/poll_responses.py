@@ -1,0 +1,275 @@
+"""
+Poll-specific response definitions for FastAPI endpoints.
+
+This module contains response configurations specific to poll operations,
+building upon common responses for maximum reusability.
+"""
+
+from app.schemas.poll import PollRead
+from app.schemas.common import PaginatedResponse
+from app.schemas.error import BusinessErrorResponse
+from .common_responses import (
+    AUTH_ERROR_RESPONSE,
+    get_validation_error_response,
+    get_server_error_response,
+    RATE_LIMIT_ERROR_RESPONSE,
+    CONTENT_TYPE_JSON,
+    EXAMPLE_TIMESTAMP
+)
+
+# Constants for poll paths
+POLLS_BASE_PATH = "/api/v1/polls/"
+MY_POLLS_PATH = "/api/v1/polls/my-polls"
+
+# Poll success response examples
+POLL_SUCCESS_EXAMPLE = {
+    "id": 1,
+    "title": "Favorite Programming Language",
+    "description": "Vote for your preferred language",
+    "is_active": True,
+    "owner_id": 1,
+    "pub_date": "2024-01-01T12:00:00Z",
+    "options": []
+}
+
+POLL_WITH_OPTIONS_EXAMPLE = {
+    "id": 1,
+    "title": "My Programming Poll",
+    "description": "A poll I created about programming languages",
+    "is_active": True,
+    "owner_id": 1,
+    "pub_date": "2024-01-01T12:00:00Z",
+    "options": [
+        {
+            "id": 1,
+            "text": "Python",
+            "vote_count": 5
+        },
+        {
+            "id": 2,
+            "text": "JavaScript",
+            "vote_count": 3
+        }
+    ]
+}
+
+PAGINATED_POLLS_EXAMPLE = {
+    "items": [POLL_SUCCESS_EXAMPLE],
+    "total": 1,
+    "page": 1,
+    "size": 10,
+    "pages": 1
+}
+
+PAGINATED_USER_POLLS_EXAMPLE = {
+    "items": [POLL_WITH_OPTIONS_EXAMPLE],
+    "total": 1,
+    "page": 1,
+    "size": 10,
+    "pages": 1
+}
+
+# Poll-specific error responses
+def get_poll_business_error_response(path: str):
+    """Generate business logic error response for polls."""
+    return {
+        "description": "Business logic error",
+        "model": BusinessErrorResponse,
+        "content": {
+            CONTENT_TYPE_JSON: {
+                "examples": {
+                    "duplicate_poll": {
+                        "summary": "Duplicate poll title",
+                        "value": {
+                            "message": "A poll with this title already exists",
+                            "error_code": "DUPLICATE_POLL_TITLE",
+                            "details": {"existing_poll_id": 123},
+                            "timestamp": EXAMPLE_TIMESTAMP,
+                            "path": path
+                        }
+                    },
+                    "poll_limit": {
+                        "summary": "Poll creation limit exceeded",
+                        "value": {
+                            "message": "Maximum number of polls per user exceeded (100)",
+                            "error_code": "POLL_LIMIT_EXCEEDED",
+                            "details": {
+                                "current_count": 100,
+                                "max_allowed": 100
+                            },
+                            "timestamp": EXAMPLE_TIMESTAMP,
+                            "path": path
+                        }
+                    },
+                    "integrity_error": {
+                        "summary": "Database integrity constraint violated",
+                        "value": {
+                            "message": "Data integrity constraint violated",
+                            "error_code": "INTEGRITY_ERROR",
+                            "hint": "Check for duplicate values or invalid references",
+                            "timestamp": EXAMPLE_TIMESTAMP,
+                            "path": path
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+def get_poll_not_found_response(path: str):
+    """Generate poll not found error response."""
+    return {
+        "description": "Poll not found",
+        "model": BusinessErrorResponse,
+        "content": {
+            CONTENT_TYPE_JSON: {
+                "example": {
+                    "message": "Poll not found",
+                    "error_code": "POLL_NOT_FOUND",
+                    "poll_id": 999,
+                    "timestamp": EXAMPLE_TIMESTAMP,
+                    "path": path
+                }
+            }
+        }
+    }
+
+def get_poll_forbidden_response(path: str):
+    """Generate poll access forbidden error response."""
+    return {
+        "description": "Access forbidden - not poll owner",
+        "model": BusinessErrorResponse,
+        "content": {
+            CONTENT_TYPE_JSON: {
+                "example": {
+                    "message": "Not authorized to update this poll",
+                    "error_code": "NOT_AUTHORIZED_UPDATE",
+                    "poll_id": 1,
+                    "owner_id": 2,
+                    "timestamp": EXAMPLE_TIMESTAMP,
+                    "path": path
+                }
+            }
+        }
+    }
+
+def get_poll_validation_response(path: str):
+    """Generate validation error response specific to polls."""
+    base_response = get_validation_error_response(path)
+    # Add poll-specific validation examples
+    base_response["content"][CONTENT_TYPE_JSON]["examples"]["invalid_title"] = {
+        "summary": "Invalid poll title",
+        "value": {
+            "message": "Validation failed",
+            "error_code": "VALIDATION_ERROR",
+            "errors": [
+                {
+                    "loc": ["title"],
+                    "msg": "ensure this value has at least 5 characters",
+                    "type": "value_error.any_str.min_length",
+                    "ctx": {"limit_value": 5}
+                }
+            ],
+            "timestamp": EXAMPLE_TIMESTAMP,
+            "path": path
+        }
+    }
+    return base_response
+
+# Complete response sets for different poll endpoints
+
+# Poll creation responses
+POLL_CREATE_RESPONSES = {
+    201: {
+        "description": "Poll created successfully",
+        "model": PollRead,
+        "content": {
+            CONTENT_TYPE_JSON: {
+                "example": POLL_SUCCESS_EXAMPLE
+            }
+        }
+    },
+    401: AUTH_ERROR_RESPONSE,
+    429: RATE_LIMIT_ERROR_RESPONSE
+}
+
+# Poll update responses
+def get_poll_update_responses(poll_id: int = 1):
+    """Generate complete response set for poll update endpoint."""
+    path = f"/api/v1/polls/{poll_id}"
+    return {
+        200: {
+            "description": "Poll updated successfully",
+            "model": PollRead,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        **POLL_SUCCESS_EXAMPLE,
+                        "title": "Updated Poll Title",
+                        "description": "Updated description"
+                    }
+                }
+            }
+        },
+        400: get_poll_business_error_response(path),
+        401: AUTH_ERROR_RESPONSE,
+        403: get_poll_forbidden_response(path),
+        404: get_poll_not_found_response(path),
+        422: get_poll_validation_response(path),
+        500: get_server_error_response("INTERNAL_ERROR", path)
+    }
+
+# Poll list responses  
+def get_poll_list_responses(path: str = POLLS_BASE_PATH):
+    """Generate complete response set for poll list endpoint."""
+    return {
+        200: {
+            "description": "Polls retrieved successfully",
+            "model": PaginatedResponse[PollRead],
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": PAGINATED_POLLS_EXAMPLE
+                }
+            }
+        },
+        422: get_validation_error_response(path),
+        500: get_server_error_response("POLL_RETRIEVAL_FAILED", path)
+    }
+
+# User polls responses
+def get_user_polls_responses(path: str = MY_POLLS_PATH):
+    """Generate complete response set for user polls endpoint."""
+    return {
+        200: {
+            "description": "User polls retrieved successfully",
+            "model": PaginatedResponse[PollRead],
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": PAGINATED_USER_POLLS_EXAMPLE
+                }
+            }
+        },
+        401: AUTH_ERROR_RESPONSE,
+        422: get_validation_error_response(path),
+        500: get_server_error_response("USER_POLLS_RETRIEVAL_FAILED", path)
+    }
+
+# Poll creation responses with business logic errors
+def get_poll_create_responses(path: str = POLLS_BASE_PATH):
+    """Generate complete response set for poll creation endpoint."""
+    return {
+        **POLL_CREATE_RESPONSES,
+        400: get_poll_business_error_response(path),
+        422: get_poll_validation_response(path),
+        500: get_server_error_response("INTERNAL_ERROR", path)
+    }
+
+# Convenience exports for common use cases
+POLL_SUCCESS_RESPONSES = POLL_CREATE_RESPONSES
+POLL_ERROR_RESPONSES = {
+    400: get_poll_business_error_response(POLLS_BASE_PATH),
+    401: AUTH_ERROR_RESPONSE,
+    404: get_poll_not_found_response(POLLS_BASE_PATH),
+    422: get_poll_validation_response(POLLS_BASE_PATH),
+    500: get_server_error_response()
+}
