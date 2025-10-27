@@ -128,6 +128,8 @@ class ErrorMessages:
     RATE_LIMIT_EXCEEDED = "Rate limit exceeded"
     POLL_INACTIVE = "Poll is not active"
     ALREADY_VOTED = "User has already voted on this poll"
+    VOTE_LIMIT_EXCEEDED = "Daily vote limit exceeded"
+    OPTION_NOT_IN_POLL = "The specified option does not belong to this poll"
     
     # System errors
     DATABASE_ERROR = "Database operation failed"
@@ -157,6 +159,12 @@ class ErrorCodes:
     DUPLICATE_RESOURCE = "DUPLICATE_RESOURCE"
     RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
     BUSINESS_RULE_VIOLATION = "BUSINESS_RULE_VIOLATION"
+    
+    # Voting
+    ALREADY_VOTED = "ALREADY_VOTED"
+    VOTE_LIMIT_EXCEEDED = "VOTE_LIMIT_EXCEEDED"
+    OPTION_NOT_IN_POLL = "OPTION_NOT_IN_POLL"
+    POLL_INACTIVE = "POLL_INACTIVE"
     
     # System
     DATABASE_ERROR = "DATABASE_ERROR"

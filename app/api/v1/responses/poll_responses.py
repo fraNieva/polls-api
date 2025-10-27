@@ -559,3 +559,211 @@ def get_poll_option_create_responses(poll_id: int = 1):
         },
         500: get_server_error_response("POLL_OPTION_CREATION_FAILED", path)
     }
+
+def get_poll_vote_responses(poll_id: int = 1, option_id: int = 1):
+    """Generate complete response set for poll voting endpoint."""
+    path = f"/api/v1/polls/{poll_id}/vote/{option_id}"
+    
+    return {
+        200: {
+            "description": "Vote recorded successfully",
+            "model": "VoteResponse",
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Vote recorded successfully",
+                        "vote": {
+                            "id": 456,
+                            "user_id": 123,
+                            "poll_option_id": option_id,
+                            "poll_id": poll_id,
+                            "created_at": EXAMPLE_TIMESTAMP
+                        },
+                        "poll_id": poll_id,
+                        "option_id": option_id,
+                        "updated_vote_count": 15,
+                        "timestamp": EXAMPLE_TIMESTAMP
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Business logic error - poll voting restrictions",
+            "model": "BusinessErrorResponse",
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "examples": {
+                        "poll_inactive": {
+                            "summary": "Poll is not active",
+                            "value": {
+                                "message": "Cannot vote on an inactive poll",
+                                "error_code": "POLL_INACTIVE",
+                                "poll_id": poll_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "already_voted": {
+                            "summary": "User already voted",
+                            "value": {
+                                "message": "User has already voted on this poll",
+                                "error_code": "ALREADY_VOTED",
+                                "poll_id": poll_id,
+                                "existing_vote_option_id": 2,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "vote_limit_exceeded": {
+                            "summary": "Daily vote limit exceeded",
+                            "value": {
+                                "message": "Daily vote limit exceeded",
+                                "error_code": "VOTE_LIMIT_EXCEEDED",
+                                "current_votes": 1000,
+                                "max_allowed": 1000,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required for private polls",
+            "model": "AuthErrorResponse",
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "examples": {
+                        "auth_required_private": {
+                            "summary": "Authentication required for private poll voting",
+                            "value": {
+                                "message": "Authentication required to vote on this private poll",
+                                "error_code": "AUTHENTICATION_REQUIRED",
+                                "poll_id": poll_id,
+                                "hint": "This is a private poll that requires authentication",
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "invalid_token": {
+                            "summary": "Invalid authentication token",
+                            "value": {
+                                "message": "Invalid authentication credentials",
+                                "error_code": "INVALID_CREDENTIALS",
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        403: {
+            "description": "Access denied to private poll",
+            "model": "AuthErrorResponse",
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Access denied to this private poll",
+                        "error_code": "ACCESS_DENIED",
+                        "poll_id": poll_id,
+                        "owner_id": 456,
+                        "hint": "This poll is private and you don't have access",
+                        "timestamp": EXAMPLE_TIMESTAMP,
+                        "path": path
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Poll or option not found",
+            "model": "BusinessErrorResponse", 
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "examples": {
+                        "poll_not_found": {
+                            "summary": "Poll not found",
+                            "value": {
+                                "message": "Poll not found",
+                                "error_code": "POLL_NOT_FOUND",
+                                "poll_id": poll_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "option_not_found": {
+                            "summary": "Poll option not found",
+                            "value": {
+                                "message": "Poll option not found",
+                                "error_code": "POLL_OPTION_NOT_FOUND",
+                                "poll_id": poll_id,
+                                "option_id": option_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "option_not_in_poll": {
+                            "summary": "Option doesn't belong to poll",
+                            "value": {
+                                "message": "The specified option does not belong to this poll",
+                                "error_code": "OPTION_NOT_IN_POLL",
+                                "poll_id": poll_id,
+                                "option_id": option_id,
+                                "actual_poll_id": 999,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Validation error",
+            "model": "ValidationErrorResponse",
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "examples": {
+                        "invalid_poll_id": {
+                            "summary": "Invalid poll ID format",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["path", "poll_id"],
+                                        "msg": "Poll ID must be greater than 0",
+                                        "type": "value_error.number.not_gt",
+                                        "ctx": {"limit_value": 0}
+                                    }
+                                ],
+                                "poll_id": poll_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        },
+                        "invalid_option_id": {
+                            "summary": "Invalid option ID format",
+                            "value": {
+                                "message": "Validation failed",
+                                "error_code": "VALIDATION_ERROR",
+                                "errors": [
+                                    {
+                                        "loc": ["path", "option_id"],
+                                        "msg": "Option ID must be greater than 0",
+                                        "type": "value_error.number.not_gt",
+                                        "ctx": {"limit_value": 0}
+                                    }
+                                ],
+                                "option_id": option_id,
+                                "timestamp": EXAMPLE_TIMESTAMP,
+                                "path": path
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        500: get_server_error_response("POLL_VOTE_FAILED", path)
+    }

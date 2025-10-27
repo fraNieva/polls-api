@@ -7,6 +7,7 @@ These tests verify endpoint behavior, schema validation, and error handling.
 
 import pytest
 from unittest.mock import Mock, patch
+from datetime import datetime, timezone
 from fastapi import status
 from fastapi.testclient import TestClient
 from app.models.user import User
@@ -1921,36 +1922,435 @@ class TestPollOptions:
 
 
 class TestPollVoting:
-    """Test poll voting endpoint contracts"""
+    """Test poll voting endpoint contracts with comprehensive scenarios"""
 
-    def test_vote_unauthorized(self, client):
-        """Test voting without authentication fails"""
-        response = client.post("/api/v1/polls/1/vote/1")
-        
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-
-    def test_vote_on_nonexistent_poll(self, auth_headers):
-        """Test voting on non-existent poll returns 404"""
-        from app.api.v1.endpoints.dependencies import get_current_user
+    def test_vote_authenticated_success(self, auth_headers):
+        """Test successful vote by authenticated user"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
         from main import app
         
         def mock_get_current_user():
             mock_user = Mock(spec=User)
             mock_user.id = 1
             return mock_user
-        
+
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.is_active = True
+            mock_poll.owner_id = 2
+            
+            # Mock poll option
+            mock_option = Mock()
+            mock_option.id = 1
+            mock_option.poll_id = 1
+            mock_option.vote_count = 5
+            
+            # Mock new vote
+            mock_vote = Mock()
+            mock_vote.id = 123
+            mock_vote.user_id = 1
+            mock_vote.poll_option_id = 1
+            mock_vote.poll_id = 1
+            mock_vote.created_at = datetime.now(timezone.utc)
+            
+            # Setup sequential query responses
+            def side_effect(*args):
+                query_mock = Mock()
+                
+                if args[0].__name__ == 'Poll':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_poll
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'PollOption':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_option
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'Vote':
+                    # Mock the join query for existing votes (should return None)
+                    join_mock = Mock()
+                    filter_after_join_mock = Mock()
+                    filter_after_join_mock.first.return_value = None  # No existing vote
+                    join_mock.filter.return_value = filter_after_join_mock
+                    query_mock.join.return_value = join_mock
+                    
+                    # Mock the simple filter for daily limit count
+                    filter_mock = Mock()
+                    filter_mock.count.return_value = 10  # Under daily limit
+                    query_mock.filter.return_value = filter_mock
+                    
+                    return query_mock
+                        
+                return query_mock
+            
+            mock_db.query.side_effect = side_effect
+            mock_db.add.return_value = None
+            mock_db.commit.return_value = None
+            
+            # Mock the refresh operation to set the created_at timestamp
+            def mock_refresh(obj):
+                if hasattr(obj, 'user_id'):  # This is the vote object
+                    obj.id = 123
+                    obj.created_at = datetime.now(timezone.utc)
+                elif hasattr(obj, 'vote_count'):  # This is the poll option object  
+                    obj.vote_count = 6  # Increment from 5 to 6
+            
+            mock_db.refresh.side_effect = mock_refresh
+            
+            return mock_db
+
         app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["message"] == "Vote recorded successfully"
+            assert data["poll_id"] == 1
+            assert data["option_id"] == 1
+            assert "vote" in data
+            assert "updated_vote_count" in data
+            assert "timestamp" in data
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_unauthenticated_fails(self, client):
+        """Test unauthenticated voting fails (current behavior - auth required)"""
+        response = client.post("/api/v1/polls/1/vote/1")
+        
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_vote_poll_not_found(self, auth_headers):
+        """Test voting on non-existent poll returns 404"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        def mock_get_db():
+            mock_db = Mock()
+            mock_db.query.return_value.filter.return_value.first.return_value = None  # Poll not found
+            return mock_db
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
         
         try:
             client = TestClient(app)
             response = client.post("/api/v1/polls/999999/vote/1", headers=auth_headers)
             
             assert response.status_code == status.HTTP_404_NOT_FOUND
+            data = response.json()
+            assert data["error_code"] == "POLL_NOT_FOUND"
+            assert data["poll_id"] == 999999
         finally:
             app.dependency_overrides.clear()
 
-    def test_vote_on_nonexistent_option(self, auth_headers):
+    def test_vote_poll_inactive(self, auth_headers):
+        """Test voting on inactive poll returns 400"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock inactive poll
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.is_active = False  # Inactive poll
+            mock_poll.owner_id = 2
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_poll
+            
+            return mock_db
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            data = response.json()
+            assert data["error_code"] == "POLL_INACTIVE"
+            assert data["poll_id"] == 1
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_option_not_found(self, auth_headers):
         """Test voting on non-existent option returns 404"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll exists
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.is_active = True
+            mock_poll.owner_id = 2
+            
+            # Setup sequential query responses
+            def side_effect(*args):
+                query_mock = Mock()
+                filter_mock = Mock()
+                query_mock.filter.return_value = filter_mock
+                
+                if args[0].__name__ == 'Poll':
+                    filter_mock.first.return_value = mock_poll
+                elif args[0].__name__ == 'PollOption':
+                    filter_mock.first.return_value = None  # Option not found
+                        
+                return query_mock
+            
+            mock_db.query.side_effect = side_effect
+            return mock_db
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/999999", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+            data = response.json()
+            assert data["error_code"] == "POLL_OPTION_NOT_FOUND"
+            assert data["poll_id"] == 1
+            assert data["option_id"] == 999999
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_option_not_in_poll(self, auth_headers):
+        """Test voting on option that doesn't belong to poll returns 404"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll exists
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.is_active = True
+            mock_poll.owner_id = 2
+            
+            # Mock option exists but belongs to different poll
+            mock_option = Mock()
+            mock_option.id = 1
+            mock_option.poll_id = 999  # Different poll ID
+            
+            # Setup sequential query responses
+            def side_effect(*args):
+                query_mock = Mock()
+                filter_mock = Mock()
+                query_mock.filter.return_value = filter_mock
+                
+                if args[0].__name__ == 'Poll':
+                    filter_mock.first.return_value = mock_poll
+                elif args[0].__name__ == 'PollOption':
+                    filter_mock.first.return_value = mock_option
+                        
+                return query_mock
+            
+            mock_db.query.side_effect = side_effect
+            return mock_db
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+            data = response.json()
+            assert data["error_code"] == "OPTION_NOT_IN_POLL"
+            assert data["poll_id"] == 1
+            assert data["option_id"] == 1
+            assert data["actual_poll_id"] == 999
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_already_voted(self, auth_headers):
+        """Test voting when user already voted returns 400"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll exists
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.is_active = True
+            mock_poll.owner_id = 2
+            
+            # Mock option exists
+            mock_option = Mock()
+            mock_option.id = 1
+            mock_option.poll_id = 1
+            
+            # Mock existing vote
+            mock_existing_vote = Mock()
+            mock_existing_vote.poll_option_id = 2  # Voted for different option
+            
+            # Setup sequential query responses
+            def side_effect(*args):
+                query_mock = Mock()
+                
+                if args[0].__name__ == 'Poll':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_poll
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'PollOption':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_option
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'Vote':
+                    # Mock the join query for existing votes (should return existing vote)
+                    join_mock = Mock()
+                    filter_after_join_mock = Mock()
+                    filter_after_join_mock.first.return_value = mock_existing_vote  # Existing vote found
+                    join_mock.filter.return_value = filter_after_join_mock
+                    query_mock.join.return_value = join_mock
+                    
+                    # Mock the simple filter for daily limit count
+                    filter_mock = Mock()
+                    filter_mock.count.return_value = 10  # Under daily limit
+                    query_mock.filter.return_value = filter_mock
+                    
+                    return query_mock
+                        
+                return query_mock
+            
+            mock_db.query.side_effect = side_effect
+            return mock_db
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            data = response.json()
+            assert data["error_code"] == "ALREADY_VOTED"
+            assert data["poll_id"] == 1
+            assert data["existing_vote_option_id"] == 2
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_daily_limit_exceeded(self, auth_headers):
+        """Test voting when daily limit exceeded returns 400"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll exists
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.is_active = True
+            mock_poll.owner_id = 2
+            
+            # Mock option exists
+            mock_option = Mock()
+            mock_option.id = 1
+            mock_option.poll_id = 1
+            
+            # Setup sequential query responses
+            def side_effect(*args):
+                query_mock = Mock()
+                
+                if args[0].__name__ == 'Poll':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_poll
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'PollOption':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_option
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'Vote':
+                    # Mock the join query for existing votes (should return None)
+                    join_mock = Mock()
+                    filter_after_join_mock = Mock()
+                    filter_after_join_mock.first.return_value = None  # No existing vote
+                    join_mock.filter.return_value = filter_after_join_mock
+                    query_mock.join.return_value = join_mock
+                    
+                    # Mock the simple filter for daily limit count - OVER limit
+                    filter_mock = Mock()
+                    filter_mock.count.return_value = 1000  # Over daily limit
+                    query_mock.filter.return_value = filter_mock
+                    
+                    return query_mock
+                        
+                return query_mock
+            
+            mock_db.query.side_effect = side_effect
+            return mock_db
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            data = response.json()
+            assert data["error_code"] == "VOTE_LIMIT_EXCEEDED"
+            assert data["current_votes"] == 1000
+            assert data["max_allowed"] == 1000
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_invalid_poll_id(self, auth_headers):
+        """Test voting with invalid poll_id format returns 422"""
         from app.api.v1.endpoints.dependencies import get_current_user
         from main import app
         
@@ -1958,15 +2358,119 @@ class TestPollVoting:
             mock_user = Mock(spec=User)
             mock_user.id = 1
             return mock_user
-        
+
         app.dependency_overrides[get_current_user] = mock_get_current_user
         
         try:
             client = TestClient(app)
-            # Even if poll exists, this option ID shouldn't exist
-            response = client.post("/api/v1/polls/1/vote/999999", headers=auth_headers)
+            response = client.post("/api/v1/polls/0/vote/1", headers=auth_headers)
             
-            assert response.status_code == status.HTTP_404_NOT_FOUND
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            data = response.json()
+            assert data["error_code"] == "VALIDATION_ERROR"
+            assert data["poll_id"] == 0
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_invalid_option_id(self, auth_headers):
+        """Test voting with invalid option_id format returns 422"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/0", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            data = response.json()
+            assert data["error_code"] == "VALIDATION_ERROR"
+            assert data["option_id"] == 0
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_vote_database_error(self, auth_headers):
+        """Test voting with database error returns 500"""
+        from app.api.v1.endpoints.dependencies import get_current_user, get_db
+        from main import app
+        from sqlalchemy.exc import SQLAlchemyError
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll exists
+            mock_poll = Mock()
+            mock_poll.id = 1
+            mock_poll.is_active = True
+            mock_poll.owner_id = 2
+            
+            # Mock option exists
+            mock_option = Mock()
+            mock_option.id = 1
+            mock_option.poll_id = 1
+            mock_option.vote_count = 5
+            
+            # Setup query responses and then database error on commit
+            def side_effect(*args):
+                query_mock = Mock()
+                
+                if args[0].__name__ == 'Poll':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_poll
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'PollOption':
+                    filter_mock = Mock()
+                    filter_mock.first.return_value = mock_option
+                    query_mock.filter.return_value = filter_mock
+                    return query_mock
+                elif args[0].__name__ == 'Vote':
+                    # Mock the join query for existing votes (should return None)
+                    join_mock = Mock()
+                    filter_after_join_mock = Mock()
+                    filter_after_join_mock.first.return_value = None  # No existing vote
+                    join_mock.filter.return_value = filter_after_join_mock
+                    query_mock.join.return_value = join_mock
+                    
+                    # Mock the simple filter for daily limit count
+                    filter_mock = Mock()
+                    filter_mock.count.return_value = 10  # Under daily limit
+                    query_mock.filter.return_value = filter_mock
+                    
+                    return query_mock
+                        
+                return query_mock
+            
+            mock_db.query.side_effect = side_effect
+            mock_db.add.return_value = None
+            mock_db.commit.side_effect = SQLAlchemyError("Database connection failed")
+            mock_db.rollback.return_value = None
+            
+            return mock_db
+
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.post("/api/v1/polls/1/vote/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            data = response.json()
+            assert data["error_code"] == "DATABASE_ERROR"
+            assert data["poll_id"] == 1
+            assert data["option_id"] == 1
         finally:
             app.dependency_overrides.clear()
 

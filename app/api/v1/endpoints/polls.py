@@ -11,7 +11,7 @@ import math
 from app.db.database import get_db
 from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
-from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse, PollOptionCreate, PollOptionResponse
+from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse, PollOptionCreate, PollOptionResponse, VoteRead, VoteResponse
 from app.schemas.common import PaginatedResponse
 from app.api.v1.endpoints.dependencies import get_current_user, get_current_user_optional
 from app.core.constants import DatabaseConfig
@@ -30,7 +30,8 @@ from app.api.v1.responses import (
     get_poll_update_responses,
     get_single_poll_responses,
     get_poll_delete_responses,
-    get_poll_option_create_responses
+    get_poll_option_create_responses,
+    get_poll_vote_responses
 )
 from app.api.v1.responses.common_responses import VALIDATION_FAILED_MESSAGE
 
@@ -1025,64 +1026,294 @@ def add_poll_option(
             }
         )
 
-@router.post('/{poll_id}/vote/{option_id}', status_code=status.HTTP_200_OK)
+@router.post(
+    '/{poll_id}/vote/{option_id}', 
+    response_model=VoteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Vote on a poll option",
+    description="Vote on a specific poll option. Authentication required. Users can only vote once per poll.",
+    responses=get_poll_vote_responses()
+)
 def vote_poll(
     poll_id: int,
     option_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)  # Required authentication for now
 ):
-    """Vote on a specific poll option."""
-    # Verify user is authenticated
-    if not current_user:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required to vote"
+    """
+    Vote on a specific poll option with comprehensive validation and error handling.
+    
+    Currently requires authentication for all votes. Future enhancement will support:
+    - **Public polls**: Allow both authenticated and anonymous voting
+    - **Private polls**: Require authentication and proper access rights
+    - **Vote limits**: Users can only vote once per poll
+    - **Rate limiting**: Daily vote limits per user
+    
+    - **poll_id**: The unique identifier of the poll to vote on
+    - **option_id**: The unique identifier of the poll option to vote for
+    - **Authentication**: Required - authenticated users can vote
+    """
+    
+    try:
+        # Log vote attempt with auth status
+        logger.info(f"Vote attempt on poll {poll_id}, option {option_id} by user {current_user.id}")
+        
+        # Validate poll_id parameter
+        if poll_id <= 0:
+            logger.warning(f"Invalid poll ID provided for voting: {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": VALIDATION_FAILED_MESSAGE,
+                    "error_code": "VALIDATION_ERROR",
+                    "errors": [
+                        {
+                            "loc": ["path", "poll_id"],
+                            "msg": "Poll ID must be greater than 0",
+                            "type": "value_error.number.not_gt",
+                            "ctx": {"limit_value": 0}
+                        }
+                    ],
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Validate option_id parameter
+        if option_id <= 0:
+            logger.warning(f"Invalid option ID provided for voting: {option_id}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": VALIDATION_FAILED_MESSAGE,
+                    "error_code": "VALIDATION_ERROR",
+                    "errors": [
+                        {
+                            "loc": ["path", "option_id"],
+                            "msg": "Option ID must be greater than 0",
+                            "type": "value_error.number.not_gt",
+                            "ctx": {"limit_value": 0}
+                        }
+                    ],
+                    "option_id": option_id
+                }
+            )
+        
+        # Get the poll with validation
+        poll = db.query(Poll).filter(Poll.id == poll_id).first()
+        if not poll:
+            logger.warning(f"Poll not found for voting: ID {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "message": ErrorMessages.POLL_NOT_FOUND,
+                    "error_code": "POLL_NOT_FOUND",
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Future: Access control logic for public/private polls
+        # When is_public field is added, this logic will control access:
+        # is_public = getattr(poll, 'is_public', True)  # Default to public for backward compatibility
+        # 
+        # if not is_public:
+        #     # Private poll - requires authentication
+        #     if not current_user:
+        #         logger.warning(f"Unauthenticated vote attempt on private poll {poll_id}")
+        #         raise HTTPException(
+        #             status_code=status.HTTP_401_UNAUTHORIZED,
+        #             detail={
+        #                 "message": "Authentication required to vote on this private poll",
+        #                 "error_code": "AUTHENTICATION_REQUIRED",
+        #                 "poll_id": poll_id,
+        #                 "hint": "This is a private poll that requires authentication"
+        #             }
+        #         )
+        #     
+        #     # Check if user has access to this private poll (could be expanded for shared access)
+        #     if poll.owner_id != current_user.id:
+        #         # Future: Add logic for shared access, team polls, etc.
+        #         logger.warning(f"User {current_user.id} attempted to vote on private poll {poll_id} owned by {poll.owner_id}")
+        #         raise HTTPException(
+        #             status_code=status.HTTP_403_FORBIDDEN,
+        #             detail={
+        #                 "message": "Access denied to this private poll",
+        #                 "error_code": "ACCESS_DENIED",
+        #                 "poll_id": poll_id,
+        #                 "owner_id": poll.owner_id,
+        #                 "hint": "This poll is private and you don't have access"
+        #             }
+        #         )
+        
+        # Check if poll is active
+        if not poll.is_active:
+            logger.warning(f"Vote attempt on inactive poll {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": ErrorMessages.POLL_INACTIVE,
+                    "error_code": ErrorCodes.POLL_INACTIVE,
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Get the poll option with validation
+        poll_option = db.query(PollOption).filter(PollOption.id == option_id).first()
+        if not poll_option:
+            logger.warning(f"Poll option not found: ID {option_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "message": ErrorMessages.POLL_OPTION_NOT_FOUND,
+                    "error_code": "POLL_OPTION_NOT_FOUND",
+                    "poll_id": poll_id,
+                    "option_id": option_id
+                }
+            )
+        
+        # Verify that the option belongs to the specified poll
+        if poll_option.poll_id != poll_id:
+            logger.warning(f"Option {option_id} does not belong to poll {poll_id}, belongs to poll {poll_option.poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "message": ErrorMessages.OPTION_NOT_IN_POLL,
+                    "error_code": ErrorCodes.OPTION_NOT_IN_POLL,
+                    "poll_id": poll_id,
+                    "option_id": option_id,
+                    "actual_poll_id": poll_option.poll_id
+                }
+            )
+        
+        # For authenticated users, check for existing votes and rate limits
+        # Check if user has already voted on this poll (any option)
+        existing_vote = db.query(Vote).join(PollOption).filter(
+            PollOption.poll_id == poll_id,
+            Vote.user_id == current_user.id
+        ).first()
+        
+        if existing_vote:
+            logger.warning(f"User {current_user.id} attempted to vote again on poll {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": ErrorMessages.ALREADY_VOTED,
+                    "error_code": ErrorCodes.ALREADY_VOTED,
+                    "poll_id": poll_id,
+                    "existing_vote_option_id": existing_vote.poll_option_id
+                }
+            )
+        
+        # Check daily vote limit for authenticated users
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_vote_count = db.query(Vote).filter(
+            Vote.user_id == current_user.id,
+            Vote.created_at >= today_start
+        ).count()
+        
+        if daily_vote_count >= BusinessLimits.MAX_VOTES_PER_USER_PER_DAY:
+            logger.warning(f"User {current_user.id} exceeded daily vote limit: {daily_vote_count}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": ErrorMessages.VOTE_LIMIT_EXCEEDED,
+                    "error_code": ErrorCodes.VOTE_LIMIT_EXCEEDED,
+                    "current_votes": daily_vote_count,
+                    "max_allowed": BusinessLimits.MAX_VOTES_PER_USER_PER_DAY
+                }
+            )
+        
+        # For anonymous users on public polls, we could implement IP-based duplicate detection
+        # This is a future enhancement when is_public field is added and user_id becomes nullable
+        
+        # Record the vote
+        vote = Vote(
+            user_id=current_user.id,  # Required authentication for now
+            poll_option_id=option_id,
+            poll_id=poll_id
+            # created_at will be automatically set by the database
         )
-    
-    # Get the poll
-    poll = db.query(Poll).filter(Poll.id == poll_id).first()
-    if not poll:
-        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
-    
-    # Verify if poll is active
-    if not poll.is_active:
+        
+        db.add(vote)
+        
+        # Increment the vote count for this option
+        poll_option.vote_count += 1
+        
+        # Commit the transaction
+        db.commit()
+        db.refresh(vote)
+        db.refresh(poll_option)
+        
+        logger.info(f"Vote recorded successfully: ID {vote.id}, Poll: {poll_id}, Option: {option_id}, User: {current_user.id}")
+        
+        # Return structured response
+        return {
+            "message": "Vote recorded successfully",
+            "vote": {
+                "id": vote.id,
+                "user_id": vote.user_id,
+                "poll_option_id": vote.poll_option_id,
+                "poll_id": vote.poll_id,
+                "created_at": vote.created_at.isoformat() if vote.created_at else None
+            },
+            "poll_id": poll_id,
+            "option_id": option_id,
+            "updated_vote_count": poll_option.vote_count,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (they're already properly formatted)
+        raise
+        
+    except ValidationError as e:
+        logger.error(f"Validation error voting on poll {poll_id}, option {option_id}: {e}")
         raise HTTPException(
-            status_code=403,
-            detail="Poll is not active"
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Validation failed",
+                "error_code": "VALIDATION_ERROR",
+                "errors": e.errors(),
+                "poll_id": poll_id,
+                "option_id": option_id
+            }
         )
-    
-    # Get the poll option
-    poll_option = db.query(PollOption).filter(
-        PollOption.id == option_id,
-        PollOption.poll_id == poll_id
-    ).first()
-    if not poll_option:
-        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_OPTION_NOT_FOUND)
-    
-    # Check if user has already voted on this poll (any option)
-    existing_vote = db.query(Vote).join(PollOption).filter(
-        PollOption.poll_id == poll_id,
-        Vote.user_id == current_user.id
-    ).first()
-    if existing_vote:
+        
+    except IntegrityError as e:
+        logger.error(f"Database integrity error voting on poll {poll_id}, option {option_id}: {e}")
+        db.rollback()
         raise HTTPException(
-            status_code=403,
-            detail="User has already voted on this poll"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Data integrity constraint violated",
+                "error_code": "INTEGRITY_ERROR",
+                "hint": "Check for duplicate votes or invalid references",
+                "poll_id": poll_id,
+                "option_id": option_id
+            }
         )
-    
-    # Record the vote
-    vote = Vote(
-        user_id=current_user.id,
-        poll_option_id=option_id,
-        poll_id=poll_id  # Set the poll_id directly
-    )
-    db.add(vote)
-    
-    # Increment the vote count for this option
-    poll_option.vote_count += 1
-    
-    db.commit()
-    db.refresh(poll_option)
-    
-    return {"message": "Vote recorded successfully", "poll_id": poll_id, "option_id": option_id}
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Database error voting on poll {poll_id}, option {option_id}: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "Database operation failed",
+                "error_code": "DATABASE_ERROR",
+                "poll_id": poll_id,
+                "option_id": option_id
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Unexpected error voting on poll {poll_id}, option {option_id}: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "An unexpected error occurred while recording the vote",
+                "error_code": "POLL_VOTE_FAILED",
+                "poll_id": poll_id,
+                "option_id": option_id
+            }
+        )

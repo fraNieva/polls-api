@@ -218,6 +218,45 @@ class PollOptionResponse(BaseModel):
             }
         }
 
+# Vote Schemas
+class VoteRead(BaseModel):
+    """Schema for reading vote data"""
+    id: int
+    user_id: int = Field(..., description="ID of the user who voted")
+    poll_option_id: int = Field(..., description="ID of the poll option voted for")
+    poll_id: int = Field(..., description="ID of the poll being voted on")
+    created_at: datetime = Field(..., description="When the vote was cast")
+    
+    class Config:
+        from_attributes = True
+
+class VoteResponse(BaseModel):
+    """Schema for vote creation response"""
+    message: str = Field(..., description="Success message")
+    vote: VoteRead = Field(..., description="The recorded vote")
+    poll_id: int = Field(..., description="ID of the poll voted on")
+    option_id: int = Field(..., description="ID of the option voted for")
+    updated_vote_count: int = Field(..., description="New vote count for the option")
+    timestamp: str = Field(..., description="Timestamp of vote recording")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "message": "Vote recorded successfully",
+                "vote": {
+                    "id": 456,
+                    "user_id": 123,
+                    "poll_option_id": 789,
+                    "poll_id": 1,
+                    "created_at": "2024-01-01T12:00:00Z"
+                },
+                "poll_id": 1,
+                "option_id": 789,
+                "updated_vote_count": 15,
+                "timestamp": "2024-01-01T12:00:00Z"
+            }
+        }
+
 
 # Enhanced response schemas for paginated endpoints
 class PaginationMeta(BaseModel):
