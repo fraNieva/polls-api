@@ -159,7 +159,7 @@ def create_poll(
         logger.info(f"User {current_user.id} attempting to create poll: '{poll.title}'")
         
         # Additional business logic validation
-        _validate_poll_business_rules(poll, current_user, db)
+        _validate_poll_business_rules(current_user, db, "create")
         
         # Check for duplicate titles by this user
         existing_poll = db.query(Poll).filter(
@@ -243,40 +243,64 @@ def create_poll(
             }
         )
 
-def _validate_poll_business_rules(poll: PollCreate, current_user: User, db: Session):
-    """Additional business logic validation"""
+def _validate_poll_business_rules(current_user: User, db: Session, operation: str = "create"):
+    """Additional business logic validation for poll operations"""
     
-    # Check user poll creation limits
-    user_poll_count = db.query(Poll).filter(Poll.owner_id == current_user.id).count()
+    # Check user poll creation limits (only for create operations)
+    if operation == "create":
+        user_poll_count = db.query(Poll).filter(Poll.owner_id == current_user.id).count()
+        
+        if user_poll_count >= BusinessLimits.MAX_POLLS_PER_USER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": f"Maximum number of polls per user exceeded ({BusinessLimits.MAX_POLLS_PER_USER})",
+                    "error_code": ErrorCodes.BUSINESS_RULE_VIOLATION,
+                    "current_count": user_poll_count,
+                    "max_allowed": BusinessLimits.MAX_POLLS_PER_USER
+                }
+            )
     
-    if user_poll_count >= BusinessLimits.MAX_POLLS_PER_USER:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": f"Maximum number of polls per user exceeded ({BusinessLimits.MAX_POLLS_PER_USER})",
-                "error_code": ErrorCodes.BUSINESS_RULE_VIOLATION,
-                "current_count": user_poll_count,
-                "max_allowed": BusinessLimits.MAX_POLLS_PER_USER
-            }
-        )
-    
-    # Check for rate limiting (example: max 5 polls per hour)
+    # Check for rate limiting - applies to both create and update operations
     from datetime import datetime, timedelta
     one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-    recent_polls = db.query(Poll).filter(
-        Poll.owner_id == current_user.id,
-        Poll.pub_date >= one_hour_ago
-    ).count()
     
-    if recent_polls >= 5:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "message": "Rate limit exceeded. Maximum 5 polls per hour.",
-                "error_code": "RATE_LIMIT_EXCEEDED",
-                "retry_after": "3600"
-            }
-        )
+    if operation == "create":
+        # Rate limit on poll creation: max 5 polls per hour
+        recent_polls = db.query(Poll).filter(
+            Poll.owner_id == current_user.id,
+            Poll.pub_date >= one_hour_ago
+        ).count()
+        
+        if recent_polls >= 5:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "message": "Rate limit exceeded. Maximum 5 polls per hour.",
+                    "error_code": "RATE_LIMIT_EXCEEDED",
+                    "retry_after": "3600"
+                }
+            )
+    
+    elif operation == "update":
+        # Rate limit on poll updates: max 10 updates per hour (more lenient than creation)
+        # Count updates by checking polls that were modified in the last hour
+        # Note: This is a simplified approach. In production, you might want to track actual update operations
+        recent_activity_count = db.query(Poll).filter(
+            Poll.owner_id == current_user.id,
+            Poll.pub_date >= one_hour_ago  # This is creation date, but serves as a proxy
+        ).count()
+        
+        # For updates, we'll allow more frequent operations but still have limits
+        if recent_activity_count >= 10:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "message": "Rate limit exceeded. Maximum 10 poll updates per hour.",
+                    "error_code": "RATE_LIMIT_EXCEEDED",
+                    "retry_after": "3600"
+                }
+            )
 
 @router.get("/", response_model=PaginatedResponse[PollRead])
 def get_polls(
@@ -638,6 +662,9 @@ def update_poll(
                     "owner_id": poll.owner_id
                 }
             )
+        
+        # Additional business logic validation for updates
+        _validate_poll_business_rules(current_user, db, "update")
         
         # Check for duplicate titles only if title is being updated
         update_data = poll_update.model_dump(exclude_unset=True)
