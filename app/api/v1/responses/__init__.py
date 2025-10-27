@@ -22,6 +22,7 @@ from .poll_responses import (
     get_poll_list_responses,
     get_user_polls_responses,
     get_single_poll_responses,
+    get_poll_delete_responses,
     POLL_SUCCESS_RESPONSES,
     POLL_ERROR_RESPONSES,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "get_poll_list_responses",
     "get_user_polls_responses",
     "get_single_poll_responses",
+    "get_poll_delete_responses",
     "POLL_SUCCESS_RESPONSES",
     "POLL_ERROR_RESPONSES",
 ]

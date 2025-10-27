@@ -335,6 +335,67 @@ def get_poll_create_responses(path: str = POLLS_BASE_PATH):
         500: get_server_error_response("INTERNAL_ERROR", path)
     }
 
+# Poll deletion responses with comprehensive error handling
+def get_poll_delete_responses(poll_id: int = 1):
+    """Generate complete response set for poll deletion endpoint."""
+    path = f"/api/v1/polls/{poll_id}"
+    return {
+        200: {
+            "description": "Poll deleted successfully",
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Poll deleted successfully",
+                        "poll_id": poll_id,
+                        "timestamp": EXAMPLE_TIMESTAMP
+                    }
+                }
+            }
+        },
+        401: AUTH_ERROR_RESPONSE,
+        403: {
+            "description": "Access forbidden - not poll owner",
+            "model": BusinessErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Not authorized to delete this poll",
+                        "error_code": "NOT_AUTHORIZED_DELETE",
+                        "poll_id": poll_id,
+                        "owner_id": 2,
+                        "timestamp": EXAMPLE_TIMESTAMP,
+                        "path": path
+                    }
+                }
+            }
+        },
+        404: get_poll_not_found_response(path),
+        422: {
+            "description": "Validation error - invalid poll ID",
+            "model": ValidationErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Validation failed",
+                        "error_code": "VALIDATION_ERROR",
+                        "errors": [
+                            {
+                                "loc": ["path", "poll_id"],
+                                "msg": "Poll ID must be greater than 0",
+                                "type": "value_error.number.not_gt",
+                                "ctx": {"limit_value": 0}
+                            }
+                        ],
+                        "poll_id": poll_id,
+                        "timestamp": EXAMPLE_TIMESTAMP,
+                        "path": path
+                    }
+                }
+            }
+        },
+        500: get_server_error_response("POLL_DELETION_FAILED", path)
+    }
+
 # Convenience exports for common use cases
 POLL_SUCCESS_RESPONSES = POLL_CREATE_RESPONSES
 POLL_ERROR_RESPONSES = {

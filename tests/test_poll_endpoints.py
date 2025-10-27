@@ -1191,6 +1191,277 @@ class TestPollManagement:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
+class TestPollDeletion:
+    """Test poll deletion endpoint contracts"""
+
+    def test_delete_poll_success(self, auth_headers):
+        """Test successful poll deletion contract"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        
+        # Create shared mock objects
+        mock_user = Mock(spec=User)
+        mock_user.id = 1
+        
+        mock_db = Mock()
+        mock_poll = Mock(spec=Poll)
+        mock_poll.id = 1
+        mock_poll.title = "Test Poll"
+        mock_poll.owner_id = 1
+        
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_filter = Mock()
+        mock_query.filter.return_value = mock_filter
+        mock_filter.first.return_value = mock_poll
+        
+        def mock_get_current_user():
+            return mock_user
+        
+        def mock_get_db():
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.delete("/api/v1/polls/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["message"] == "Poll deleted successfully"
+            assert data["poll_id"] == 1
+            assert "timestamp" in data
+            
+            # Verify the mocked database was accessed
+            mock_db.query.assert_called()  # Poll lookup was called
+            mock_db.delete.assert_called_once()  # Poll deletion was called
+            mock_db.commit.assert_called_once()  # Transaction committed
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_delete_poll_not_found(self, auth_headers):
+        """Test deleting non-existent poll returns 404"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+        
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll not found
+            mock_query = Mock()
+            mock_db.query.return_value = mock_query
+            mock_filter = Mock()
+            mock_query.filter.return_value = mock_filter
+            mock_filter.first.return_value = None
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.delete("/api/v1/polls/999", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+            data = response.json()
+            assert "Poll not found" in data["message"]
+            assert data["error_code"] == "POLL_NOT_FOUND"
+            assert data["poll_id"] == 999
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_delete_poll_not_owner(self, auth_headers):
+        """Test deleting poll owned by different user returns 403"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1  # Current user ID
+            return mock_user
+        
+        def mock_get_db():
+            mock_db = Mock()
+            
+            # Mock poll found but owned by different user
+            mock_poll = Mock(spec=Poll)
+            mock_poll.id = 1
+            mock_poll.title = "Other User's Poll"
+            mock_poll.owner_id = 2  # Different owner
+            
+            mock_query = Mock()
+            mock_db.query.return_value = mock_query
+            mock_filter = Mock()
+            mock_query.filter.return_value = mock_filter
+            mock_filter.first.return_value = mock_poll
+            
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.delete("/api/v1/polls/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            data = response.json()
+            assert "Not authorized to delete this poll" in data["message"]
+            assert data["error_code"] == "NOT_AUTHORIZED_DELETE"
+            assert data["poll_id"] == 1
+            assert data["owner_id"] == 2
+            
+            # Verify delete was NOT called
+            mock_db = app.dependency_overrides[get_db]()
+            mock_db.delete.assert_not_called()
+            mock_db.commit.assert_not_called()
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_delete_poll_invalid_id(self, auth_headers):
+        """Test deleting poll with invalid ID returns 422"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from main import app
+        
+        def mock_get_current_user():
+            mock_user = Mock(spec=User)
+            mock_user.id = 1
+            return mock_user
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        
+        try:
+            client = TestClient(app)
+            response = client.delete("/api/v1/polls/0", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            data = response.json()
+            assert data["message"] == "Validation failed"
+            assert data["error_code"] == "VALIDATION_ERROR"
+            assert data["poll_id"] == 0
+            assert len(data["errors"]) > 0
+            assert data["errors"][0]["loc"] == ["path", "poll_id"]
+            assert "Poll ID must be greater than 0" in data["errors"][0]["msg"]
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_delete_poll_database_error(self, auth_headers):
+        """Test poll deletion with database error returns 500"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        from sqlalchemy.exc import SQLAlchemyError
+        
+        # Create shared mock objects
+        mock_user = Mock(spec=User)
+        mock_user.id = 1
+        
+        mock_db = Mock()
+        mock_poll = Mock(spec=Poll)
+        mock_poll.id = 1
+        mock_poll.title = "Test Poll"
+        mock_poll.owner_id = 1
+        
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_filter = Mock()
+        mock_query.filter.return_value = mock_filter
+        mock_filter.first.return_value = mock_poll
+        
+        # Mock database error on commit
+        mock_db.commit.side_effect = SQLAlchemyError("Database connection failed")
+        
+        def mock_get_current_user():
+            return mock_user
+        
+        def mock_get_db():
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.delete("/api/v1/polls/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            data = response.json()
+            assert "Database operation failed" in data["message"]
+            assert data["error_code"] == "DATABASE_ERROR"
+            assert data["poll_id"] == 1
+            
+            # Verify rollback was called
+            mock_db.rollback.assert_called_once()
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_delete_poll_unexpected_error(self, auth_headers):
+        """Test poll deletion with unexpected error returns 500"""
+        from app.api.v1.endpoints.dependencies import get_current_user
+        from app.db.database import get_db
+        from main import app
+        
+        # Create shared mock objects
+        mock_user = Mock(spec=User)
+        mock_user.id = 1
+        
+        mock_db = Mock()
+        mock_poll = Mock(spec=Poll)
+        mock_poll.id = 1
+        mock_poll.title = "Test Poll"
+        mock_poll.owner_id = 1
+        
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_filter = Mock()
+        mock_query.filter.return_value = mock_filter
+        mock_filter.first.return_value = mock_poll
+        
+        # Mock unexpected error on delete
+        mock_db.delete.side_effect = Exception("Unexpected system error")
+        
+        def mock_get_current_user():
+            return mock_user
+        
+        def mock_get_db():
+            return mock_db
+        
+        app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[get_db] = mock_get_db
+        
+        try:
+            client = TestClient(app)
+            response = client.delete("/api/v1/polls/1", headers=auth_headers)
+            
+            assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            data = response.json()
+            assert "An unexpected error occurred while deleting the poll" in data["message"]
+            assert data["error_code"] == "POLL_DELETION_FAILED"
+            assert data["poll_id"] == 1
+            
+            # Verify rollback was called
+            mock_db.rollback.assert_called_once()
+            
+        finally:
+            app.dependency_overrides.clear()
+
+
 class TestPollOptions:
     """Test poll options endpoint contracts"""
 

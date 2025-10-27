@@ -28,7 +28,8 @@ from app.api.v1.responses import (
     get_poll_list_responses,
     get_user_polls_responses,
     get_poll_update_responses,
-    get_single_poll_responses
+    get_single_poll_responses,
+    get_poll_delete_responses
 )
 from app.api.v1.responses.common_responses import VALIDATION_FAILED_MESSAGE
 
@@ -707,27 +708,121 @@ def update_poll(
             }
         )
 
-@router.delete("/{poll_id}")
+@router.delete(
+    "/{poll_id}",
+    summary="Delete a poll",
+    description="Delete a poll permanently. Only the poll owner can delete their polls. This action cannot be undone.",
+    responses=get_poll_delete_responses()
+)
 def delete_poll(
     poll_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a poll. Only the owner can delete their polls."""
-    poll = db.query(Poll).filter(Poll.id == poll_id).first()
-    if not poll:
-        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
+    """
+    Delete a poll with comprehensive error handling and validation.
     
-    # Check if the current user is the owner
-    if poll.owner_id != current_user.id:
+    Only the poll owner can delete their polls. This operation is permanent
+    and will also delete all associated poll options and votes.
+    
+    - **poll_id**: The unique identifier of the poll to delete
+    - **Authentication**: Required - only authenticated users can delete polls
+    - **Authorization**: Only poll owners can delete their polls
+    """
+    
+    try:
+        # Log poll deletion attempt
+        logger.info(f"User {current_user.id} attempting to delete poll ID: {poll_id}")
+        
+        # Validate poll_id parameter
+        if poll_id <= 0:
+            logger.warning(f"Invalid poll ID provided for deletion: {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": VALIDATION_FAILED_MESSAGE,
+                    "error_code": "VALIDATION_ERROR",
+                    "errors": [
+                        {
+                            "loc": ["path", "poll_id"],
+                            "msg": "Poll ID must be greater than 0",
+                            "type": "value_error.number.not_gt",
+                            "ctx": {"limit_value": 0}
+                        }
+                    ],
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Get the poll
+        poll = db.query(Poll).filter(Poll.id == poll_id).first()
+        if not poll:
+            logger.warning(f"Poll not found for deletion: ID {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "message": ErrorMessages.POLL_NOT_FOUND,
+                    "error_code": "POLL_NOT_FOUND",
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Check if the current user is the owner
+        if poll.owner_id != current_user.id:
+            logger.warning(f"User {current_user.id} attempted to delete poll {poll_id} owned by user {poll.owner_id}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "message": ErrorMessages.NOT_AUTHORIZED_DELETE,
+                    "error_code": "NOT_AUTHORIZED_DELETE",
+                    "poll_id": poll_id,
+                    "owner_id": poll.owner_id
+                }
+            )
+        
+        # Store poll info for logging before deletion
+        poll_title = poll.title
+        poll_owner_id = poll.owner_id
+        
+        # Delete the poll (cascade deletes options and votes)
+        db.delete(poll)
+        db.commit()
+        
+        logger.info(f"Poll deleted successfully: ID {poll_id}, Title: '{poll_title}', Owner: {poll_owner_id}")
+        
+        return {
+            "message": "Poll deleted successfully",
+            "poll_id": poll_id,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (they're already properly formatted)
+        raise
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Database error deleting poll {poll_id}: {e}")
+        db.rollback()
         raise HTTPException(
-            status_code=403, 
-            detail=ErrorMessages.NOT_AUTHORIZED_DELETE
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "Database operation failed",
+                "error_code": "DATABASE_ERROR",
+                "poll_id": poll_id
+            }
         )
-    
-    db.delete(poll)
-    db.commit()
-    return {"message": "Poll deleted successfully"}
+        
+    except Exception as e:
+        logger.error(f"Unexpected error deleting poll {poll_id}: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "An unexpected error occurred while deleting the poll",
+                "error_code": "POLL_DELETION_FAILED",
+                "poll_id": poll_id
+            }
+        )
 
 @router.post("/{poll_id}/options", status_code=status.HTTP_201_CREATED)
 def add_poll_option(
