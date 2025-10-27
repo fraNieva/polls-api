@@ -27,8 +27,10 @@ from app.api.v1.responses import (
     get_poll_create_responses,
     get_poll_list_responses,
     get_user_polls_responses,
-    get_poll_update_responses
+    get_poll_update_responses,
+    get_single_poll_responses
 )
+from app.api.v1.responses.common_responses import VALIDATION_FAILED_MESSAGE
 
 from app.schemas.error import (
     ValidationErrorResponse, 
@@ -428,13 +430,76 @@ def get_my_polls(
             }
         )
 
-@router.get("/{poll_id}", response_model=PollRead)
+@router.get(
+    "/{poll_id}", 
+    response_model=PollRead,
+    summary="Get a specific poll by ID",
+    description="Retrieve a single poll by its unique identifier. Returns the poll with all its options and vote counts.",
+    responses=get_single_poll_responses()
+)
 def get_poll(poll_id: int, db: Session = Depends(get_db)):
-    """Get a specific poll by ID."""
-    poll = db.query(Poll).filter(Poll.id == poll_id).first()
-    if not poll:
-        raise HTTPException(status_code=404, detail=ErrorMessages.POLL_NOT_FOUND)
-    return poll
+    """
+    Get a specific poll by ID with comprehensive error handling.
+    
+    This endpoint is public and does not require authentication.
+    Returns poll details including options and vote counts.
+    """
+    
+    try:
+        # Log poll retrieval attempt
+        logger.info(f"Retrieving poll with ID: {poll_id}")
+        
+        # Validate poll_id parameter
+        if poll_id <= 0:
+            logger.warning(f"Invalid poll ID provided: {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": VALIDATION_FAILED_MESSAGE,
+                    "error_code": "VALIDATION_ERROR",
+                    "errors": [
+                        {
+                            "loc": ["path", "poll_id"],
+                            "msg": "Poll ID must be greater than 0",
+                            "type": "value_error.number.not_gt",
+                            "ctx": {"limit_value": 0}
+                        }
+                    ],
+                    "poll_id": poll_id
+                }
+            )
+        
+        # Retrieve the poll from database
+        poll = db.query(Poll).filter(Poll.id == poll_id).first()
+        
+        if not poll:
+            logger.warning(f"Poll not found: ID {poll_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "message": ErrorMessages.POLL_NOT_FOUND,
+                    "error_code": "POLL_NOT_FOUND",
+                    "poll_id": poll_id
+                }
+            )
+        
+        logger.info(f"Poll retrieved successfully: ID {poll.id}, Title: '{poll.title}'")
+        return poll
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (they're already properly formatted)
+        raise
+        
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving poll {poll_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "message": "An unexpected error occurred while retrieving the poll",
+                "error_code": "POLL_RETRIEVAL_FAILED",
+                "poll_id": poll_id
+            }
+        )
 
 @router.put(
     "/{poll_id}", 

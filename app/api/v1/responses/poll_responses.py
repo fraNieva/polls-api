@@ -7,7 +7,7 @@ building upon common responses for maximum reusability.
 
 from app.schemas.poll import PollRead
 from app.schemas.common import PaginatedResponse
-from app.schemas.error import BusinessErrorResponse
+from app.schemas.error import BusinessErrorResponse, ValidationErrorResponse
 from .common_responses import (
     AUTH_ERROR_RESPONSE,
     get_validation_error_response,
@@ -252,6 +252,46 @@ def get_user_polls_responses(path: str = MY_POLLS_PATH):
         401: AUTH_ERROR_RESPONSE,
         422: get_validation_error_response(path),
         500: get_server_error_response("USER_POLLS_RETRIEVAL_FAILED", path)
+    }
+
+# Single poll by ID responses
+def get_single_poll_responses(poll_id: int = 1):
+    """Generate complete response set for single poll retrieval endpoint."""
+    path = f"/api/v1/polls/{poll_id}"
+    return {
+        200: {
+            "description": "Poll retrieved successfully",
+            "model": PollRead,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": POLL_WITH_OPTIONS_EXAMPLE
+                }
+            }
+        },
+        404: get_poll_not_found_response(path),
+        422: {
+            "description": "Validation error - invalid poll ID",
+            "model": ValidationErrorResponse,
+            "content": {
+                CONTENT_TYPE_JSON: {
+                    "example": {
+                        "message": "Validation failed",
+                        "error_code": "VALIDATION_ERROR",
+                        "errors": [
+                            {
+                                "loc": ["path", "poll_id"],
+                                "msg": "ensure this value is greater than 0",
+                                "type": "value_error.number.not_gt",
+                                "ctx": {"limit_value": 0}
+                            }
+                        ],
+                        "timestamp": EXAMPLE_TIMESTAMP,
+                        "path": path
+                    }
+                }
+            }
+        },
+        500: get_server_error_response("POLL_RETRIEVAL_FAILED", path)
     }
 
 # Poll creation responses with business logic errors

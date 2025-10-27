@@ -287,7 +287,33 @@ class TestPollRetrieval:
         response = client.get("/api/v1/polls/999999")
         
         assert response.status_code == status.HTTP_404_NOT_FOUND
-        assert "not found" in response.json()["detail"].lower()
+        
+        # Verify structured error response format
+        error_detail = response.json()["detail"]
+        assert isinstance(error_detail, dict)
+        assert "not found" in error_detail["message"].lower()
+        assert error_detail["error_code"] == "POLL_NOT_FOUND"
+        assert error_detail["poll_id"] == 999999
+
+    def test_get_poll_invalid_id(self, client):
+        """Test getting poll with invalid ID returns 422"""
+        response = client.get("/api/v1/polls/0")  # Invalid poll ID (should be > 0)
+        
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        
+        # Verify structured error response format
+        error_detail = response.json()["detail"]
+        assert isinstance(error_detail, dict)
+        assert "Validation failed" in error_detail["message"]
+        assert error_detail["error_code"] == "VALIDATION_ERROR"
+        assert error_detail["poll_id"] == 0
+        assert len(error_detail["errors"]) == 1
+        
+        # Verify validation error details
+        validation_error = error_detail["errors"][0]
+        assert validation_error["loc"] == ["path", "poll_id"]
+        assert "greater than 0" in validation_error["msg"]
+        assert validation_error["type"] == "value_error.number.not_gt"
 
     def test_get_my_polls(self, auth_headers):
         """Test getting current user's polls"""
