@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import func
 from pydantic import ValidationError
@@ -546,9 +546,66 @@ def get_poll(
                     }
                 )
         
-        # Access granted - log successful retrieval
+        # Access granted - load options with eager loading
+        poll_with_options = db.query(Poll).options(
+            selectinload(Poll.options)
+        ).filter(Poll.id == poll_id).first()
+        
+        if not poll_with_options:
+            # This shouldn't happen as we already checked, but safety first
+            poll_with_options = poll
+        
+        # Calculate additional fields for enhanced response
+        options_data = []
+        total_votes = 0
+        user_has_voted = False
+        user_vote_option_id = None
+        
+        # Process options and calculate vote statistics
+        for option in poll_with_options.options:
+            total_votes += option.vote_count
+            options_data.append({
+                "id": option.id,
+                "text": option.text,
+                "vote_count": option.vote_count,
+                "percentage": 0.0,  # Will be calculated after we know total_votes
+                "poll_id": option.poll_id
+            })
+        
+        # Calculate percentages now that we have total_votes
+        for option_data in options_data:
+            if total_votes > 0:
+                option_data["percentage"] = round((option_data["vote_count"] / total_votes) * 100, 2)
+        
+        # Check if current user has voted (only if authenticated)
+        if current_user:
+            user_vote = db.query(Vote).filter(
+                Vote.poll_id == poll_id,
+                Vote.user_id == current_user.id
+            ).first()
+            
+            if user_vote:
+                user_has_voted = True
+                user_vote_option_id = user_vote.poll_option_id
+        
+        # Create enhanced poll response
+        poll_dict = {
+            "id": poll_with_options.id,
+            "title": poll_with_options.title,
+            "description": poll_with_options.description,
+            "is_active": poll_with_options.is_active,
+            "is_public": poll_with_options.is_public,
+            "owner_id": poll_with_options.owner_id,
+            "pub_date": poll_with_options.pub_date,
+            "options": options_data,
+            "total_votes": total_votes,
+            "user_has_voted": user_has_voted,
+            "user_vote_option_id": user_vote_option_id
+        }
+        
+        # Log successful retrieval
         logger.info(f"Poll retrieved successfully: ID {poll.id}, Title: '{poll.title}', Requester: {user_info}")
-        return poll
+        return poll_dict
         
     except HTTPException:
         # Re-raise HTTP exceptions (they're already properly formatted)

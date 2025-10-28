@@ -112,6 +112,12 @@ class PollRead(BaseModel):
     owner_id: int
     pub_date: datetime
     
+    # Enhanced fields for frontend consumption
+    options: List["PollOptionRead"] = Field(default_factory=list, description="Poll options with vote data")
+    total_votes: int = Field(default=0, description="Total number of votes across all options")
+    user_has_voted: bool = Field(default=False, description="Whether current user has voted (if authenticated)")
+    user_vote_option_id: Optional[int] = Field(default=None, description="ID of option user voted for (if any)")
+    
     model_config = ConfigDict(from_attributes=True)
 
 # Schema for updating a poll
@@ -201,6 +207,7 @@ class PollOptionRead(BaseModel):
     id: int
     text: str
     vote_count: int = Field(default=0, description="Number of votes for this option")
+    percentage: float = Field(default=0.0, description="Percentage of total votes (0-100)")
     poll_id: int
     
     model_config = ConfigDict(from_attributes=True)
@@ -329,3 +336,6 @@ class PaginatedPollResponse(BaseModel):
             }
         }
     )
+
+# Update forward references for recursive models
+PollRead.model_rebuild()
