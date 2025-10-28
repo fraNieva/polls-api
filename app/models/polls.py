@@ -11,6 +11,7 @@ class Poll(Base):
     title = Column(String, nullable=False, index=True)  # Removed unique constraint for tests
     description = Column(String, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)  # Changed from status to is_active
+    is_public = Column(Boolean, default=True, nullable=False)  # Public by default for backward compatibility
     
     # Foreign key to user table
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)

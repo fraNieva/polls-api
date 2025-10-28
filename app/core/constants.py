@@ -131,6 +131,10 @@ class ErrorMessages:
     VOTE_LIMIT_EXCEEDED = "Daily vote limit exceeded"
     OPTION_NOT_IN_POLL = "The specified option does not belong to this poll"
     
+    # Private poll access errors
+    PRIVATE_POLL_ACCESS_DENIED = "Access denied to private poll"
+    AUTHENTICATION_REQUIRED_PRIVATE = "Authentication required for private poll"
+    
     # System errors
     DATABASE_ERROR = "Database operation failed"
     INTERNAL_ERROR = "An unexpected error occurred"
@@ -165,6 +169,10 @@ class ErrorCodes:
     VOTE_LIMIT_EXCEEDED = "VOTE_LIMIT_EXCEEDED"
     OPTION_NOT_IN_POLL = "OPTION_NOT_IN_POLL"
     POLL_INACTIVE = "POLL_INACTIVE"
+    
+    # Private poll access codes
+    PRIVATE_POLL_ACCESS = "PRIVATE_POLL_ACCESS"
+    AUTH_REQUIRED_PRIVATE = "AUTH_REQUIRED_PRIVATE"
     
     # System
     DATABASE_ERROR = "DATABASE_ERROR"

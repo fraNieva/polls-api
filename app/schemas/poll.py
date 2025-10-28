@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from datetime import datetime
 from typing import Optional, List
 import re
@@ -11,17 +11,21 @@ class PollCreate(BaseModel):
         min_length=BusinessLimits.MIN_POLL_TITLE_LENGTH,
         max_length=BusinessLimits.MAX_POLL_TITLE_LENGTH,
         description=f'Poll title ({BusinessLimits.MIN_POLL_TITLE_LENGTH}-{BusinessLimits.MAX_POLL_TITLE_LENGTH} characters)',
-        example="What's yout favourite programming language?"
+        json_schema_extra={"example": "What's yout favourite programming language?"}
     )
     description: Optional[str] = Field(
         None,
         max_length=BusinessLimits.MAX_POLL_DESCRIPTION_LENGTH,
         description=f'Optional poll description (max {BusinessLimits.MAX_POLL_DESCRIPTION_LENGTH} characters)',
-        example="Vote for your preferred programming language for web development"
+        json_schema_extra={"example": "Vote for your preferred programming language for web development"}
     )
     is_active: bool = Field(
         True,
         description="Whether the poll is active and acceptiong votes"
+    )
+    is_public: bool = Field(
+        True,
+        description="Whether the poll is visible to all users (public) or only accessible to authorized users (private)"
     )
 
     @field_validator('title')
@@ -67,8 +71,6 @@ class PollCreateWithOptions(PollCreate):
     """Enhanced schema for creating polls with initial options"""
     options: List[str] = Field(
         [],
-        min_items=0,
-        max_items=10,
         description="Initial poll options (0-10 options, can be added later)"
     )
     
@@ -76,6 +78,10 @@ class PollCreateWithOptions(PollCreate):
     def validate_options(cls, v):
         if not v:
             return v
+        
+        # Check length constraints
+        if len(v) > 10:
+            raise ValueError('Cannot provide more than 10 options')
             
         # Remove duplicates while preserving order
         seen = set()
@@ -102,11 +108,11 @@ class PollRead(BaseModel):
     title: str
     description: Optional[str] = None
     is_active: bool
+    is_public: bool
     owner_id: int
     pub_date: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Schema for updating a poll
 class PollUpdate(BaseModel):
@@ -122,6 +128,10 @@ class PollUpdate(BaseModel):
         description=f'Optional poll description (max {BusinessLimits.MAX_POLL_DESCRIPTION_LENGTH} characters)',
     )
     is_active: Optional[bool] = None
+    is_public: Optional[bool] = Field(
+        None,
+        description="Whether the poll is visible to all users (public) or only accessible to authorized users (private)"
+    )
 
     @field_validator('title')
     def validate_title(cls, v):
@@ -164,7 +174,7 @@ class PollOptionCreate(BaseModel):
         min_length=1,
         max_length=BusinessLimits.MAX_POLL_OPTION_LENGTH,
         description=f'Poll option text (1-{BusinessLimits.MAX_POLL_OPTION_LENGTH} characters)',
-        example="Python"
+        json_schema_extra={"example": "Python"}
     )
     
     @field_validator('text')
@@ -193,8 +203,7 @@ class PollOptionRead(BaseModel):
     vote_count: int = Field(default=0, description="Number of votes for this option")
     poll_id: int
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PollOptionResponse(BaseModel):
     """Schema for poll option creation response"""
@@ -203,8 +212,8 @@ class PollOptionResponse(BaseModel):
     poll_id: int = Field(..., description="ID of the poll the option was added to")
     timestamp: str = Field(..., description="Timestamp of option creation")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "message": "Poll option added successfully",
                 "option": {
@@ -217,6 +226,7 @@ class PollOptionResponse(BaseModel):
                 "timestamp": "2024-01-01T12:00:00Z"
             }
         }
+    )
 
 # Vote Schemas
 class VoteRead(BaseModel):
@@ -227,8 +237,7 @@ class VoteRead(BaseModel):
     poll_id: int = Field(..., description="ID of the poll being voted on")
     created_at: datetime = Field(..., description="When the vote was cast")
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class VoteResponse(BaseModel):
     """Schema for vote creation response"""
@@ -239,8 +248,8 @@ class VoteResponse(BaseModel):
     updated_vote_count: int = Field(..., description="New vote count for the option")
     timestamp: str = Field(..., description="Timestamp of vote recording")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "message": "Vote recorded successfully",
                 "vote": {
@@ -256,6 +265,7 @@ class VoteResponse(BaseModel):
                 "timestamp": "2024-01-01T12:00:00Z"
             }
         }
+    )
 
 
 # Enhanced response schemas for paginated endpoints
@@ -268,8 +278,8 @@ class PaginationMeta(BaseModel):
     has_next: bool = Field(..., description="Whether there are more pages")
     has_prev: bool = Field(..., description="Whether there are previous pages")
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "total": 25,
                 "page": 2,
@@ -279,6 +289,7 @@ class PaginationMeta(BaseModel):
                 "has_prev": True
             }
         }
+    )
 
 
 class PaginatedPollResponse(BaseModel):
@@ -291,8 +302,8 @@ class PaginatedPollResponse(BaseModel):
     has_next: bool = Field(..., description="Whether there are more pages")
     has_prev: bool = Field(..., description="Whether there are previous pages")
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "polls": [
                     {
@@ -317,3 +328,4 @@ class PaginatedPollResponse(BaseModel):
                 "has_prev": False
             }
         }
+    )

@@ -16,7 +16,7 @@ from .common_responses import (
     common_server_error_example,
 )
 
-from .poll_responses import (
+from .poll_responses_with_models import (
     get_poll_create_responses,
     get_poll_update_responses,
     get_poll_list_responses,
@@ -25,9 +25,14 @@ from .poll_responses import (
     get_poll_delete_responses,
     get_poll_option_create_responses,
     get_poll_vote_responses,
-    POLL_SUCCESS_RESPONSES,
-    POLL_ERROR_RESPONSES,
 )
+
+# Add missing function alias
+get_poll_get_responses = get_single_poll_responses
+
+# Define missing constants as empty
+POLL_SUCCESS_RESPONSES = {}
+POLL_ERROR_RESPONSES = {}
 
 __all__ = [
     # Common responses

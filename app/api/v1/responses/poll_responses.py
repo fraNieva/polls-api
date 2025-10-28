@@ -7,7 +7,7 @@ building upon common responses for maximum reusability.
 
 from app.schemas.poll import PollRead
 from app.schemas.common import PaginatedResponse
-from app.schemas.error import BusinessErrorResponse, ValidationErrorResponse, AuthErrorResponse
+from app.schemas.error import ValidationErrorResponse, AuthErrorResponse
 from .common_responses import (
     AUTH_ERROR_RESPONSE,
     get_validation_error_response,
@@ -74,7 +74,6 @@ def get_poll_business_error_response(path: str):
     """Generate business logic error response for polls."""
     return {
         "description": "Business logic error",
-        "model": BusinessErrorResponse,
         "content": {
             CONTENT_TYPE_JSON: {
                 "examples": {
@@ -120,7 +119,6 @@ def get_poll_not_found_response(path: str):
     """Generate poll not found error response."""
     return {
         "description": "Poll not found",
-        "model": BusinessErrorResponse,
         "content": {
             CONTENT_TYPE_JSON: {
                 "example": {
@@ -138,7 +136,6 @@ def get_poll_forbidden_response(path: str):
     """Generate poll access forbidden error response."""
     return {
         "description": "Access forbidden - not poll owner",
-        "model": BusinessErrorResponse,
         "content": {
             CONTENT_TYPE_JSON: {
                 "example": {
@@ -182,7 +179,7 @@ def get_poll_validation_response(path: str):
 POLL_CREATE_RESPONSES = {
     201: {
         "description": "Poll created successfully",
-        "model": PollRead,
+        
         "content": {
             CONTENT_TYPE_JSON: {
                 "example": POLL_SUCCESS_EXAMPLE
@@ -200,7 +197,7 @@ def get_poll_update_responses(poll_id: int = 1):
     return {
         200: {
             "description": "Poll updated successfully",
-            "model": PollRead,
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -225,7 +222,7 @@ def get_poll_list_responses(path: str = POLLS_BASE_PATH):
     return {
         200: {
             "description": "Polls retrieved successfully",
-            "model": PaginatedResponse[PollRead],
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": PAGINATED_POLLS_EXAMPLE
@@ -242,7 +239,7 @@ def get_user_polls_responses(path: str = MY_POLLS_PATH):
     return {
         200: {
             "description": "User polls retrieved successfully",
-            "model": PaginatedResponse[PollRead],
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": PAGINATED_USER_POLLS_EXAMPLE
@@ -261,7 +258,7 @@ def get_single_poll_responses(poll_id: int = 1):
     return {
         200: {
             "description": "Poll retrieved successfully",
-            "model": PollRead,
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": POLL_WITH_OPTIONS_EXAMPLE
@@ -270,7 +267,7 @@ def get_single_poll_responses(poll_id: int = 1):
         },
         401: {
             "description": "Authentication required for private poll access",
-            "model": AuthErrorResponse,
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -285,7 +282,6 @@ def get_single_poll_responses(poll_id: int = 1):
         },
         403: {
             "description": "Access denied to private poll",
-            "model": BusinessErrorResponse,
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -302,7 +298,7 @@ def get_single_poll_responses(poll_id: int = 1):
         404: get_poll_not_found_response(path),
         422: {
             "description": "Validation error - invalid poll ID",
-            "model": ValidationErrorResponse,
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -355,7 +351,6 @@ def get_poll_delete_responses(poll_id: int = 1):
         401: AUTH_ERROR_RESPONSE,
         403: {
             "description": "Access forbidden - not poll owner",
-            "model": BusinessErrorResponse,
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -372,7 +367,7 @@ def get_poll_delete_responses(poll_id: int = 1):
         404: get_poll_not_found_response(path),
         422: {
             "description": "Validation error - invalid poll ID",
-            "model": ValidationErrorResponse,
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -435,7 +430,6 @@ def get_poll_option_create_responses(poll_id: int = 1):
         },
         400: {
             "description": "Business logic error",
-            "model": BusinessErrorResponse,
             "content": {
                 CONTENT_TYPE_JSON: {
                     "examples": {
@@ -479,7 +473,7 @@ def get_poll_option_create_responses(poll_id: int = 1):
         401: AUTH_ERROR_RESPONSE,
         403: {
             "description": "Access denied - not poll owner",
-            "model": AuthErrorResponse,
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -496,7 +490,7 @@ def get_poll_option_create_responses(poll_id: int = 1):
         404: get_poll_not_found_response(path),
         422: {
             "description": "Validation error",
-            "model": ValidationErrorResponse,
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "examples": {
@@ -567,7 +561,6 @@ def get_poll_vote_responses(poll_id: int = 1, option_id: int = 1):
     return {
         200: {
             "description": "Vote recorded successfully",
-            "model": "VoteResponse",
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -589,7 +582,6 @@ def get_poll_vote_responses(poll_id: int = 1, option_id: int = 1):
         },
         400: {
             "description": "Business logic error - poll voting restrictions",
-            "model": "BusinessErrorResponse",
             "content": {
                 CONTENT_TYPE_JSON: {
                     "examples": {
@@ -631,7 +623,7 @@ def get_poll_vote_responses(poll_id: int = 1, option_id: int = 1):
         },
         401: {
             "description": "Authentication required for private polls",
-            "model": "AuthErrorResponse",
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "examples": {
@@ -661,7 +653,7 @@ def get_poll_vote_responses(poll_id: int = 1, option_id: int = 1):
         },
         403: {
             "description": "Access denied to private poll",
-            "model": "AuthErrorResponse",
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "example": {
@@ -678,7 +670,6 @@ def get_poll_vote_responses(poll_id: int = 1, option_id: int = 1):
         },
         404: {
             "description": "Poll or option not found",
-            "model": "BusinessErrorResponse", 
             "content": {
                 CONTENT_TYPE_JSON: {
                     "examples": {
@@ -721,7 +712,7 @@ def get_poll_vote_responses(poll_id: int = 1, option_id: int = 1):
         },
         422: {
             "description": "Validation error",
-            "model": "ValidationErrorResponse",
+            
             "content": {
                 CONTENT_TYPE_JSON: {
                     "examples": {

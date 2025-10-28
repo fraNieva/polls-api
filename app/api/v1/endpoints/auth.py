@@ -1,9 +1,8 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Annotated
 from app.db.database import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserRead
@@ -51,8 +50,7 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/token", response_model=Token)
 def login_for_access_token(
-    username: Annotated[str, Form()], 
-    password: Annotated[str, Form()], 
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
     """Authenticate user and return a JWT token. Uses OAuth2 compatible form data.
@@ -60,9 +58,9 @@ def login_for_access_token(
     IMPORTANT: In the 'username' field, enter the user's EMAIL ADDRESS, not their username!
     This endpoint is compatible with OAuth2 password flow.
     """
-    user = db.query(User).filter(User.email == username).first()
+    user = db.query(User).filter(User.email == form_data.username).first()
     
-    if not user or not verify_password(password, user.hashed_password):
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email o contraseña incorrectos",

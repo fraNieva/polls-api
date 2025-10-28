@@ -11,7 +11,7 @@ import math
 from app.db.database import get_db
 from app.models.polls import Poll, Vote, PollOption
 from app.models.user import User
-from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse, PollOptionCreate, PollOptionResponse, VoteRead, VoteResponse
+from app.schemas.poll import PollCreate, PollRead, PollUpdate, PaginatedPollResponse, PollOptionCreate, PollOptionResponse, VoteRead
 from app.schemas.common import PaginatedResponse
 from app.api.v1.endpoints.dependencies import get_current_user, get_current_user_optional
 from app.core.constants import DatabaseConfig
@@ -25,19 +25,19 @@ from app.api.v1.utils.pagination import (
 
 from app.api.v1.responses import (
     get_poll_create_responses,
-    get_poll_list_responses,
-    get_user_polls_responses,
     get_poll_update_responses,
-    get_single_poll_responses,
     get_poll_delete_responses,
-    get_poll_option_create_responses,
-    get_poll_vote_responses
+    get_poll_get_responses,
+    get_poll_list_responses,
+    get_poll_vote_responses,
+    get_user_polls_responses,
+    get_single_poll_responses,
+    get_poll_option_create_responses
 )
 from app.api.v1.responses.common_responses import VALIDATION_FAILED_MESSAGE
 
 from app.schemas.error import (
     ValidationErrorResponse, 
-    BusinessErrorResponse, 
     AuthErrorResponse,
     RateLimitErrorResponse,
     ServerErrorResponse
@@ -110,6 +110,7 @@ def create_poll(
             title=poll.title.strip(),
             description=poll.description.strip() if poll.description else None,
             is_active=poll.is_active,
+            is_public=poll.is_public,
             owner_id=current_user.id
         )
         
@@ -238,7 +239,7 @@ def _validate_poll_business_rules(current_user: User, db: Session, operation: st
     "/", 
     response_model=PaginatedResponse[PollRead],
     summary="Get paginated list of polls",
-    description="Retrieve polls with filtering, sorting, and pagination options. Public endpoint accessible to all users.",
+    description="Retrieve polls with filtering, sorting, and pagination options. Anonymous users see public polls only. Authenticated users see public polls plus their own private polls.",
     responses=get_poll_list_responses()
 )
 def get_polls(
@@ -247,7 +248,8 @@ def get_polls(
     search: Optional[str] = Query(None, description="Search in poll titles"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     owner_id: Optional[int] = Query(None, description="Filter by owner ID"),
-    sort: SortOption = Query(SortOption.CREATED_DESC, description="Sort order")
+    sort: SortOption = Query(SortOption.CREATED_DESC, description="Sort order"),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Get paginated list of polls with filtering and sorting options.
@@ -268,6 +270,17 @@ def get_polls(
     try:
         # Build base query
         query = db.query(Poll)
+        
+        # Apply privacy filtering based on authentication
+        if not current_user:
+            # Anonymous users only see public polls
+            query = query.filter(Poll.is_public == True)
+        else:
+            # Authenticated users see public polls + their own private polls
+            query = query.filter(
+                (Poll.is_public == True) | 
+                (Poll.owner_id == current_user.id)
+            )
         
         # Apply filters
         if is_active is not None:
@@ -501,41 +514,39 @@ def get_poll(
                 }
             )
         
-        # Access control logic (ready for future is_public field)
-        # For now, all polls are considered public since is_public field doesn't exist yet
-        # When is_public field is added, this logic will control access:
+        # Access control logic for public/private polls
+        is_public = poll.is_public
         
-        # Future logic will be:
-        # is_public = getattr(poll, 'is_public', True)  # Default to public for backward compatibility
-        # 
-        # if not is_public:
-        #     # Private poll - requires authentication and proper access
-        #     if not current_user:
-        #         logger.warning(f"Unauthenticated access attempt to private poll {poll_id}")
-        #         raise HTTPException(
-        #             status_code=status.HTTP_401_UNAUTHORIZED,
-        #             detail={
-        #                 "message": "Authentication required to access this private poll",
-        #                 "error_code": "AUTHENTICATION_REQUIRED",
-        #                 "poll_id": poll_id
-        #             }
-        #         )
-        #     
-        #     # Check if user has access to this private poll
-        #     if poll.owner_id != current_user.id:
-        #         # Future: Add logic for shared access, team polls, etc.
-        #         logger.warning(f"User {current_user.id} attempted to access private poll {poll_id} owned by {poll.owner_id}")
-        #         raise HTTPException(
-        #             status_code=status.HTTP_403_FORBIDDEN,
-        #             detail={
-        #                 "message": "Access denied to this private poll",
-        #                 "error_code": "ACCESS_DENIED",
-        #                 "poll_id": poll_id,
-        #                 "owner_id": poll.owner_id
-        #             }
-        #         )
+        if not is_public:
+            # Private poll - requires authentication and proper access
+            if not current_user:
+                logger.warning(f"Unauthenticated access attempt to private poll {poll_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "message": "Authentication required to access this private poll",
+                        "error_code": "AUTHENTICATION_REQUIRED",
+                        "poll_id": poll_id,
+                        "hint": "This is a private poll that requires authentication"
+                    }
+                )
+            
+            # Check if user has access to this private poll
+            if poll.owner_id != current_user.id:
+                # Future: Add logic for shared access, team polls, etc.
+                logger.warning(f"User {current_user.id} attempted to access private poll {poll_id} owned by {poll.owner_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "message": "Access denied to this private poll",
+                        "error_code": "ACCESS_DENIED", 
+                        "poll_id": poll_id,
+                        "owner_id": poll.owner_id,
+                        "hint": "This poll is private and you don't have access"
+                    }
+                )
         
-        # For now, all polls are accessible (current behavior maintained)
+        # Access granted - log successful retrieval
         logger.info(f"Poll retrieved successfully: ID {poll.id}, Title: '{poll.title}', Requester: {user_info}")
         return poll
         
@@ -1028,17 +1039,16 @@ def add_poll_option(
 
 @router.post(
     '/{poll_id}/vote/{option_id}', 
-    response_model=VoteResponse,
     status_code=status.HTTP_200_OK,
     summary="Vote on a poll option",
-    description="Vote on a specific poll option. Authentication required. Users can only vote once per poll.",
+    description="Vote on a specific poll option. Public polls allow anonymous voting, private polls require authentication. Users can only vote once per poll.",
     responses=get_poll_vote_responses()
 )
 def vote_poll(
     poll_id: int,
     option_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Required authentication for now
+    current_user: Optional[User] = Depends(get_current_user_optional)  # Now conditional authentication
 ):
     """
     Vote on a specific poll option with comprehensive validation and error handling.
@@ -1055,8 +1065,9 @@ def vote_poll(
     """
     
     try:
-        # Log vote attempt with auth status
-        logger.info(f"Vote attempt on poll {poll_id}, option {option_id} by user {current_user.id}")
+        # Log vote attempt with safe user info access
+        user_info = f"user {current_user.id}" if current_user else "anonymous user"
+        logger.info(f"Vote attempt on poll {poll_id}, option {option_id} by {user_info}")
         
         # Validate poll_id parameter
         if poll_id <= 0:
@@ -1111,38 +1122,37 @@ def vote_poll(
                 }
             )
         
-        # Future: Access control logic for public/private polls
-        # When is_public field is added, this logic will control access:
-        # is_public = getattr(poll, 'is_public', True)  # Default to public for backward compatibility
-        # 
-        # if not is_public:
-        #     # Private poll - requires authentication
-        #     if not current_user:
-        #         logger.warning(f"Unauthenticated vote attempt on private poll {poll_id}")
-        #         raise HTTPException(
-        #             status_code=status.HTTP_401_UNAUTHORIZED,
-        #             detail={
-        #                 "message": "Authentication required to vote on this private poll",
-        #                 "error_code": "AUTHENTICATION_REQUIRED",
-        #                 "poll_id": poll_id,
-        #                 "hint": "This is a private poll that requires authentication"
-        #             }
-        #         )
-        #     
-        #     # Check if user has access to this private poll (could be expanded for shared access)
-        #     if poll.owner_id != current_user.id:
-        #         # Future: Add logic for shared access, team polls, etc.
-        #         logger.warning(f"User {current_user.id} attempted to vote on private poll {poll_id} owned by {poll.owner_id}")
-        #         raise HTTPException(
-        #             status_code=status.HTTP_403_FORBIDDEN,
-        #             detail={
-        #                 "message": "Access denied to this private poll",
-        #                 "error_code": "ACCESS_DENIED",
-        #                 "poll_id": poll_id,
-        #                 "owner_id": poll.owner_id,
-        #                 "hint": "This poll is private and you don't have access"
-        #             }
-        #         )
+        # Access control logic for public/private polls
+        is_public = poll.is_public
+        
+        if not is_public:
+            # Private poll - requires authentication
+            if not current_user:
+                logger.warning(f"Unauthenticated vote attempt on private poll {poll_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "message": "Authentication required to vote on this private poll",
+                        "error_code": "AUTHENTICATION_REQUIRED",
+                        "poll_id": poll_id,
+                        "hint": "This is a private poll that requires authentication"
+                    }
+                )
+            
+            # Check if user has access to this private poll (could be expanded for shared access)
+            if poll.owner_id != current_user.id:
+                # Future: Add logic for shared access, team polls, etc.
+                logger.warning(f"User {current_user.id} attempted to vote on private poll {poll_id} owned by {poll.owner_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "message": "Access denied to this private poll",
+                        "error_code": "ACCESS_DENIED",
+                        "poll_id": poll_id,
+                        "owner_id": poll.owner_id,
+                        "hint": "This poll is private and you don't have access"
+                    }
+                )
         
         # Check if poll is active
         if not poll.is_active:
@@ -1184,41 +1194,57 @@ def vote_poll(
                 }
             )
         
-        # For authenticated users, check for existing votes and rate limits
-        # Check if user has already voted on this poll (any option)
-        existing_vote = db.query(Vote).join(PollOption).filter(
-            PollOption.poll_id == poll_id,
-            Vote.user_id == current_user.id
-        ).first()
-        
-        if existing_vote:
-            logger.warning(f"User {current_user.id} attempted to vote again on poll {poll_id}")
+        # Handle voting validation based on authentication status
+        if current_user:
+            # Authenticated user - apply all validation rules
+            # Check if user has already voted on this poll (any option)
+            existing_vote = db.query(Vote).join(PollOption).filter(
+                PollOption.poll_id == poll_id,
+                Vote.user_id == current_user.id
+            ).first()
+            
+            if existing_vote:
+                logger.warning(f"User {current_user.id} attempted to vote again on poll {poll_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "message": ErrorMessages.ALREADY_VOTED,
+                        "error_code": ErrorCodes.ALREADY_VOTED,
+                        "poll_id": poll_id,
+                        "existing_vote_option_id": existing_vote.poll_option_id
+                    }
+                )
+            
+            # Check daily vote limit for authenticated users
+            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            daily_vote_count = db.query(Vote).filter(
+                Vote.user_id == current_user.id,
+                Vote.created_at >= today_start
+            ).count()
+            
+            if daily_vote_count >= BusinessLimits.MAX_VOTES_PER_USER_PER_DAY:
+                logger.warning(f"User {current_user.id} exceeded daily vote limit: {daily_vote_count}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "message": ErrorMessages.VOTE_LIMIT_EXCEEDED,
+                        "error_code": ErrorCodes.VOTE_LIMIT_EXCEEDED,
+                        "current_votes": daily_vote_count,
+                        "max_allowed": BusinessLimits.MAX_VOTES_PER_USER_PER_DAY
+                    }
+                )
+        else:
+            # Anonymous voting on public poll
+            # Note: Since Vote model requires user_id (nullable=False), we need to handle this
+            # For now, we'll require authentication until we can modify the Vote model
+            logger.warning(f"Anonymous vote attempt on public poll {poll_id} - Vote model requires user_id")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
-                    "message": ErrorMessages.ALREADY_VOTED,
-                    "error_code": ErrorCodes.ALREADY_VOTED,
+                    "message": "Authentication required for voting (Vote model constraint)",
+                    "error_code": "VOTE_MODEL_CONSTRAINT",
                     "poll_id": poll_id,
-                    "existing_vote_option_id": existing_vote.poll_option_id
-                }
-            )
-        
-        # Check daily vote limit for authenticated users
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        daily_vote_count = db.query(Vote).filter(
-            Vote.user_id == current_user.id,
-            Vote.created_at >= today_start
-        ).count()
-        
-        if daily_vote_count >= BusinessLimits.MAX_VOTES_PER_USER_PER_DAY:
-            logger.warning(f"User {current_user.id} exceeded daily vote limit: {daily_vote_count}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "message": ErrorMessages.VOTE_LIMIT_EXCEEDED,
-                    "error_code": ErrorCodes.VOTE_LIMIT_EXCEEDED,
-                    "current_votes": daily_vote_count,
-                    "max_allowed": BusinessLimits.MAX_VOTES_PER_USER_PER_DAY
+                    "hint": "Vote model currently requires authenticated user - will be fixed in future update"
                 }
             )
         

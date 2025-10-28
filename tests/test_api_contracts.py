@@ -148,6 +148,7 @@ class TestSchemaValidation:
             "description": "A test poll",
             "owner_id": 1,
             "is_active": True,
+            "is_public": True,
             "pub_date": datetime.now()
         }
         poll = PollRead(**valid_data)

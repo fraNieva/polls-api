@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import Optional
 
 # Define a schema for creating a new user
@@ -17,6 +17,4 @@ class UserRead(BaseModel):
     username: str
     is_active: bool
 
-    class Config:
-        # Enable ORM mode to work with SQLAlchemy models
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -5,13 +5,7 @@ This module contains response configurations that are shared across multiple end
 promoting consistency and reducing duplication in OpenAPI documentation.
 """
 
-from app.schemas.error import (
-    ValidationErrorResponse,
-    BusinessErrorResponse, 
-    AuthErrorResponse,
-    RateLimitErrorResponse,
-    ServerErrorResponse
-)
+# No model imports needed anymore - using just examples
 
 # Constants for common values
 CONTENT_TYPE_JSON = "application/json"
@@ -23,8 +17,7 @@ VALIDATION_ERROR_CODE = "VALIDATION_ERROR"
 
 # Common authentication error response
 AUTH_ERROR_RESPONSE = {
-    "description": "Authentication required",
-    "model": AuthErrorResponse,
+    "description": "Authentication failed",
     "content": {
         CONTENT_TYPE_JSON: {
             "example": {
@@ -38,65 +31,24 @@ AUTH_ERROR_RESPONSE = {
 }
 
 # Common validation error response with reusable examples
-def get_validation_error_response(path: str = EXAMPLE_API_PATH):
-    """Generate validation error response with context-specific path."""
+def get_validation_error_response(path: str):
+    """Generate validation error response for any endpoint."""
     return {
-        "description": "Validation error",
-        "model": ValidationErrorResponse,
+        "description": "Validation failed",
         "content": {
             CONTENT_TYPE_JSON: {
-                "examples": {
-                    "invalid_page": {
-                        "summary": "Invalid page parameter",
-                        "value": {
-                            "message": VALIDATION_FAILED_MESSAGE,
-                            "error_code": VALIDATION_ERROR_CODE,
-                            "errors": [
-                                {
-                                    "loc": ["query", "page"],
-                                    "msg": "ensure this value is greater than 0",
-                                    "type": "value_error.number.not_gt",
-                                    "ctx": {"limit_value": 0}
-                                }
-                            ],
-                            "timestamp": EXAMPLE_TIMESTAMP,
-                            "path": path
+                "example": {
+                    "message": "Validation failed",
+                    "error_code": "VALIDATION_ERROR",
+                    "errors": [
+                        {
+                            "loc": ["body", "field_name"],
+                            "msg": "Field is required",
+                            "type": "value_error.missing"
                         }
-                    },
-                    "invalid_size": {
-                        "summary": "Invalid page size parameter",
-                        "value": {
-                            "message": VALIDATION_FAILED_MESSAGE,
-                            "error_code": VALIDATION_ERROR_CODE,
-                            "errors": [
-                                {
-                                    "loc": ["query", "size"],
-                                    "msg": "ensure this value is less than or equal to 100",
-                                    "type": "value_error.number.not_le",
-                                    "ctx": {"limit_value": 100}
-                                }
-                            ],
-                            "timestamp": EXAMPLE_TIMESTAMP,
-                            "path": path
-                        }
-                    },
-                    "invalid_sort": {
-                        "summary": "Invalid sort parameter",
-                        "value": {
-                            "message": VALIDATION_FAILED_MESSAGE,
-                            "error_code": VALIDATION_ERROR_CODE,
-                            "errors": [
-                                {
-                                    "loc": ["query", "sort"],
-                                    "msg": "value is not a valid enumeration member",
-                                    "type": "type_error.enum",
-                                    "ctx": {"enum_values": ["created_desc", "created_asc", "title_asc", "title_desc", "votes_desc", "votes_asc"]}
-                                }
-                            ],
-                            "timestamp": EXAMPLE_TIMESTAMP,
-                            "path": path
-                        }
-                    }
+                    ],
+                    "timestamp": EXAMPLE_TIMESTAMP,
+                    "path": path
                 }
             }
         }
@@ -105,7 +57,6 @@ def get_validation_error_response(path: str = EXAMPLE_API_PATH):
 # Common rate limit error response
 RATE_LIMIT_ERROR_RESPONSE = {
     "description": "Rate limit exceeded", 
-    "model": RateLimitErrorResponse,
     "content": {
         CONTENT_TYPE_JSON: {
             "example": {
@@ -120,11 +71,10 @@ RATE_LIMIT_ERROR_RESPONSE = {
 }
 
 # Common server error response
-def get_server_error_response(error_code: str = "INTERNAL_ERROR", path: str = EXAMPLE_API_PATH):
-    """Generate server error response with context-specific error code and path."""
+def get_server_error_response(error_code: str, path: str):
+    """Generate server error response for any endpoint."""
     return {
         "description": "Internal server error",
-        "model": ServerErrorResponse,
         "content": {
             CONTENT_TYPE_JSON: {
                 "example": {
@@ -138,8 +88,8 @@ def get_server_error_response(error_code: str = "INTERNAL_ERROR", path: str = EX
     }
 
 # Shorthand references for common responses
-VALIDATION_ERROR_RESPONSE = get_validation_error_response()
-SERVER_ERROR_RESPONSE = get_server_error_response()
+VALIDATION_ERROR_RESPONSE = get_validation_error_response("/path")
+SERVER_ERROR_RESPONSE = get_server_error_response("INTERNAL_ERROR", "/path")
 
 # Common validation examples for query parameters
 common_validation_examples = {

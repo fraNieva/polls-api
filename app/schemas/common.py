@@ -5,7 +5,7 @@ This module contains reusable schemas that can be used by multiple endpoints.
 """
 
 from typing import TypeVar, Generic, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # Generic type for paginated responses
@@ -22,8 +22,8 @@ class PaginatedResponse(BaseModel, Generic[T]):
     has_next: bool = Field(..., description="Whether there are more pages")
     has_prev: bool = Field(..., description="Whether there are previous pages")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "items": [],
                 "total": 25,
@@ -34,3 +34,4 @@ class PaginatedResponse(BaseModel, Generic[T]):
                 "has_prev": False
             }
         }
+    )

@@ -120,3 +120,4 @@ polls.db
 .DS_Store
 
 .ai-assistant-config.md
+migration.db.py
