@@ -113,7 +113,7 @@ class TestUserEndpoints:
         
         response = client.post("/api/v1/users/", json=user_data)
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_create_user_missing_fields(self, client):
         """Test user creation with missing required fields fails"""
@@ -124,7 +124,7 @@ class TestUserEndpoints:
         
         response = client.post("/api/v1/users/", json=user_data)
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 # Additional contract tests that would apply if more endpoints were implemented

@@ -109,7 +109,7 @@ class TestAuthenticationEndpoints:
         
         response = client.post("/api/v1/auth/register", json=user_data)
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_register_user_missing_fields(self, client):
         """Test registration with missing required fields fails"""
@@ -120,7 +120,7 @@ class TestAuthenticationEndpoints:
         
         response = client.post("/api/v1/auth/register", json=user_data)
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     @patch('app.api.v1.endpoints.auth.create_access_token')
     @patch('app.api.v1.endpoints.auth.verify_password')
@@ -220,7 +220,7 @@ class TestAuthenticationEndpoints:
         """Test login with missing credentials fails"""
         response = client.post("/api/v1/auth/login", json={})
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 # Tests for protected endpoints using JWT token validation

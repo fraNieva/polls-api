@@ -6,9 +6,8 @@ across all API endpoints.
 """
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, declarative_base
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from typing import List
@@ -37,6 +36,12 @@ class TestModel(Base):
     description = Column(String(500))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Add this to avoid pytest collection warning
+    def __init__(self, **kwargs):
+        # Call parent constructor with only valid column arguments
+        valid_args = {k: v for k, v in kwargs.items() if hasattr(self.__class__, k)}
+        super().__init__(**valid_args)
 
 
 @pytest.fixture

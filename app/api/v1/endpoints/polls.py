@@ -129,7 +129,7 @@ def create_poll(
     except ValidationError as e:
         logger.error(f"Validation error creating poll: {e}")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "message": "Validation failed",
                 "error_code": "VALIDATION_ERROR",
@@ -484,7 +484,7 @@ def get_poll(
         if poll_id <= 0:
             logger.warning(f"Invalid poll ID provided: {poll_id}")
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "message": VALIDATION_FAILED_MESSAGE,
                     "error_code": "VALIDATION_ERROR",
@@ -723,7 +723,63 @@ def update_poll(
         else:
             logger.info(f"No changes detected for poll {poll_id} - all provided values match current values")
         
-        return poll
+        # Return enhanced poll response (same as get_poll)
+        # Load options with eager loading for response
+        poll_with_options = db.query(Poll).options(
+            selectinload(Poll.options)
+        ).filter(Poll.id == poll_id).first()
+        
+        if not poll_with_options:
+            poll_with_options = poll
+        
+        # Calculate additional fields for enhanced response
+        options_data = []
+        total_votes = 0
+        user_has_voted = False
+        user_vote_option_id = None
+        
+        # Process options and calculate vote statistics
+        for option in poll_with_options.options:
+            total_votes += option.vote_count
+            options_data.append({
+                "id": option.id,
+                "text": option.text,
+                "vote_count": option.vote_count,
+                "percentage": 0.0,  # Will be calculated after we know total_votes
+                "poll_id": option.poll_id
+            })
+        
+        # Calculate percentages now that we have total_votes
+        for option_data in options_data:
+            if total_votes > 0:
+                option_data["percentage"] = round((option_data["vote_count"] / total_votes) * 100, 2)
+        
+        # Check if current user has voted (only if authenticated)
+        user_vote = db.query(Vote).filter(
+            Vote.poll_id == poll_id,
+            Vote.user_id == current_user.id
+        ).first()
+        
+        if user_vote:
+            user_has_voted = True
+            user_vote_option_id = user_vote.poll_option_id
+        
+        # Create enhanced poll response
+        poll_dict = {
+            "id": poll_with_options.id,
+            "title": poll_with_options.title,
+            "description": poll_with_options.description,
+            "is_active": poll_with_options.is_active,
+            "is_public": poll_with_options.is_public,
+            "owner_id": poll_with_options.owner_id,
+            "pub_date": poll_with_options.pub_date,
+            "options": options_data,
+            "total_votes": total_votes,
+            "user_has_voted": user_has_voted,
+            "user_vote_option_id": user_vote_option_id
+        }
+        
+        return poll_dict
         
     except HTTPException:
         # Re-raise HTTP exceptions (they're already properly formatted)
@@ -732,7 +788,7 @@ def update_poll(
     except ValidationError as e:
         logger.error(f"Validation error updating poll {poll_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "message": "Validation failed",
                 "error_code": "VALIDATION_ERROR",
@@ -808,7 +864,7 @@ def delete_poll(
         if poll_id <= 0:
             logger.warning(f"Invalid poll ID provided for deletion: {poll_id}")
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "message": VALIDATION_FAILED_MESSAGE,
                     "error_code": "VALIDATION_ERROR",
@@ -928,7 +984,7 @@ def add_poll_option(
         if poll_id <= 0:
             logger.warning(f"Invalid poll ID provided for option creation: {poll_id}")
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "message": VALIDATION_FAILED_MESSAGE,
                     "error_code": "VALIDATION_ERROR",
@@ -1048,7 +1104,7 @@ def add_poll_option(
     except ValidationError as e:
         logger.error(f"Validation error creating poll option for poll {poll_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "message": "Validation failed",
                 "error_code": "VALIDATION_ERROR",
@@ -1130,7 +1186,7 @@ def vote_poll(
         if poll_id <= 0:
             logger.warning(f"Invalid poll ID provided for voting: {poll_id}")
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "message": VALIDATION_FAILED_MESSAGE,
                     "error_code": "VALIDATION_ERROR",
@@ -1150,7 +1206,7 @@ def vote_poll(
         if option_id <= 0:
             logger.warning(f"Invalid option ID provided for voting: {option_id}")
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "message": VALIDATION_FAILED_MESSAGE,
                     "error_code": "VALIDATION_ERROR",
@@ -1351,7 +1407,7 @@ def vote_poll(
     except ValidationError as e:
         logger.error(f"Validation error voting on poll {poll_id}, option {option_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "message": "Validation failed",
                 "error_code": "VALIDATION_ERROR",

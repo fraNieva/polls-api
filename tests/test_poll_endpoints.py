@@ -14,7 +14,17 @@ from app.models.user import User
 from app.models.polls import Poll, PollOption
 
 
-def create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=2):
+def create_mock_option(option_id=1, text="Test Option", vote_count=0, poll_id=1):
+    """Helper function to create mock poll option with all required fields"""
+    mock_option = Mock()
+    mock_option.id = option_id
+    mock_option.text = text
+    mock_option.vote_count = vote_count
+    mock_option.poll_id = poll_id
+    return mock_option
+
+
+def create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=2, include_options=True):
     """Helper function to create mock poll with all required fields"""
     from datetime import datetime, timezone
     mock_poll = Mock()
@@ -25,7 +35,82 @@ def create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=2):
     mock_poll.is_public = is_public
     mock_poll.owner_id = owner_id
     mock_poll.pub_date = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    
+    # Add mock options for enhanced poll endpoint compatibility
+    if include_options:
+        mock_poll.options = [
+            create_mock_option(option_id=1, text="Option 1", vote_count=3, poll_id=poll_id),
+            create_mock_option(option_id=2, text="Option 2", vote_count=2, poll_id=poll_id),
+        ]
+    else:
+        mock_poll.options = []
+    
+    # Add enhanced fields for backward compatibility
+    mock_poll.total_votes = sum(opt.vote_count for opt in mock_poll.options)
+    mock_poll.user_has_voted = False
+    mock_poll.user_vote_option_id = None
+    
     return mock_poll
+
+
+def create_enhanced_db_mock(poll, duplicate_poll=None, user_vote=None):
+    """
+    Create a comprehensive database mock for enhanced poll endpoints.
+    
+    Args:
+        poll: Main poll object to return
+        duplicate_poll: Poll to return for duplicate title checks (None if no duplicate)
+        user_vote: Vote object to return for user voting status (None if user hasn't voted)
+    """
+    mock_db = Mock()
+    
+    # Track query calls to handle different query patterns
+    query_calls = {'count': 0}
+    
+    def mock_query(model):
+        query_calls['count'] += 1
+        mock_query_result = Mock()
+        
+        # Handle different query types based on model and call order
+        if hasattr(model, '__name__'):
+            model_name = model.__name__
+        else:
+            model_name = 'Poll'  # Default for complex queries
+        
+        if model_name == 'Vote':
+            # Vote queries for user voting status
+            mock_query_result.filter.return_value.first.return_value = user_vote
+        elif model_name == 'Poll':
+            # Poll queries
+            def mock_filter(*args, **kwargs):
+                mock_filter_result = Mock()
+                
+                # For the first query (get poll by ID), always return the main poll
+                if query_calls['count'] == 1:
+                    mock_filter_result.first.return_value = poll
+                else:
+                    # For duplicate title checks (later queries), return duplicate_poll (can be None)
+                    mock_filter_result.first.return_value = duplicate_poll
+                
+                return mock_filter_result
+            
+            mock_query_result.filter = mock_filter
+            
+            # Handle enhanced query with options()
+            def mock_options(selectinload_arg):
+                mock_options_result = Mock()
+                mock_options_result.filter.return_value.first.return_value = poll
+                return mock_options_result
+            
+            mock_query_result.options = mock_options
+        
+        return mock_query_result
+    
+    mock_db.query = mock_query
+    mock_db.commit = Mock()
+    mock_db.refresh = Mock()
+    
+    return mock_db
 
 
 class TestPollCreation:
@@ -110,7 +195,7 @@ class TestPollCreation:
         response = client.post("/api/v1/polls/", json=poll_data)
         
         # Should fail validation regardless of auth
-        assert response.status_code in [status.HTTP_422_UNPROCESSABLE_ENTITY, status.HTTP_401_UNAUTHORIZED]
+        assert response.status_code in [status.HTTP_422_UNPROCESSABLE_CONTENT, status.HTTP_401_UNAUTHORIZED]
 
     def test_create_poll_default_values(self, auth_headers):
         """Test poll creation with default values"""
@@ -258,7 +343,7 @@ class TestPollRetrieval:
     def test_get_polls_invalid_sort(self, client):
         """Test invalid sort parameter"""
         response = client.get("/api/v1/polls/?sort=invalid_sort")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_get_polls_combined_filters(self, client):
         """Test combining multiple filters"""
@@ -314,7 +399,7 @@ class TestPollRetrieval:
         """Test getting poll with invalid ID returns 422"""
         response = client.get("/api/v1/polls/0")  # Invalid poll ID (should be > 0)
         
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         
         # Verify structured error response format
         error_detail = response.json()["detail"]
@@ -623,7 +708,7 @@ class TestPollManagement:
             
             response = client.put("/api/v1/polls/1", json=update_data, headers=auth_headers)
             
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             data = response.json()
             
             # Test validation error structure
@@ -762,36 +847,15 @@ class TestPollManagement:
             mock_user.id = 1
             return mock_user
             
+        # Mock existing poll with proper datetime
+        mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
+        mock_poll.title = "Existing Poll"
+        mock_poll.description = "Test Description"
+        mock_poll.pub_date = datetime.now(timezone.utc)
+        
+        # No duplicate poll should be found (None) when checking for same title
         def mock_get_db():
-            mock_db = Mock()
-            
-            # Mock existing poll with proper datetime
-            mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
-            mock_poll.title = "Existing Poll"
-            mock_poll.description = "Test Description"
-            mock_poll.pub_date = datetime.now(timezone.utc)
-            
-            def mock_query_chain(*args, **kwargs):
-                if hasattr(mock_query_chain, 'call_count'):
-                    mock_query_chain.call_count += 1
-                else:
-                    mock_query_chain.call_count = 1
-                
-                mock_result = Mock()
-                if mock_query_chain.call_count == 1:
-                    # First query: get poll by ID
-                    mock_result.first.return_value = mock_poll
-                else:
-                    # Second query: check for duplicate title (should exclude current poll)
-                    mock_result.first.return_value = None  # No duplicate found
-                
-                return mock_result
-            
-            mock_db.query.return_value.filter = mock_query_chain
-            mock_db.commit = Mock()
-            mock_db.refresh = Mock()
-            
-            return mock_db
+            return create_enhanced_db_mock(poll=mock_poll, duplicate_poll=None, user_vote=None)
         
         app.dependency_overrides[get_current_user] = mock_get_current_user
         app.dependency_overrides[get_db] = mock_get_db
@@ -884,21 +948,15 @@ class TestPollManagement:
             mock_user.id = 1
             return mock_user
             
+        # Mock existing poll with proper datetime
+        mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
+        mock_poll.title = "Existing Poll"
+        mock_poll.description = "Old Description"
+        mock_poll.pub_date = datetime.now(timezone.utc)
+        
+        # No duplicate check needed since title not being updated
         def mock_get_db():
-            mock_db = Mock()
-            
-            # Mock existing poll with proper datetime
-            mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
-            mock_poll.title = "Existing Poll"
-            mock_poll.description = "Old Description"
-            mock_poll.pub_date = datetime.now(timezone.utc)
-            
-            # Mock query chain for getting the poll (only called once for poll lookup)
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_poll
-            mock_db.commit = Mock()
-            mock_db.refresh = Mock()
-            
-            return mock_db
+            return create_enhanced_db_mock(poll=mock_poll, duplicate_poll=None, user_vote=None)
         
         app.dependency_overrides[get_current_user] = mock_get_current_user
         app.dependency_overrides[get_db] = mock_get_db
@@ -928,35 +986,14 @@ class TestPollManagement:
             return mock_user
             
         def mock_get_db():
-            mock_db = Mock()
-            
             # Mock the poll being updated
             mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
             mock_poll.title = "Original Poll"
             mock_poll.description = "Test Description"
             mock_poll.pub_date = datetime.now(timezone.utc)
             
-            def mock_query_chain(*args, **kwargs):
-                if hasattr(mock_query_chain, 'call_count'):
-                    mock_query_chain.call_count += 1
-                else:
-                    mock_query_chain.call_count = 1
-                
-                mock_result = Mock()
-                if mock_query_chain.call_count == 1:
-                    # First query: get poll by ID
-                    mock_result.first.return_value = mock_poll
-                else:
-                    # Second query: check for duplicate title (no match for same user)
-                    mock_result.first.return_value = None
-                
-                return mock_result
-            
-            mock_db.query.return_value.filter = mock_query_chain
-            mock_db.commit = Mock()
-            mock_db.refresh = Mock()
-            
-            return mock_db
+            # Different user has same title, but it's allowed (duplicate check is per-user)
+            return create_enhanced_db_mock(poll=mock_poll, duplicate_poll=None, user_vote=None)
         
         app.dependency_overrides[get_current_user] = mock_get_current_user
         app.dependency_overrides[get_db] = mock_get_db
@@ -986,35 +1023,13 @@ class TestPollManagement:
             return mock_user
             
         def mock_get_db():
-            mock_db = Mock()
-            
             # Mock existing poll with current values
             mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
             mock_poll.title = "Current Title"
             mock_poll.description = "Current Description"
             mock_poll.pub_date = datetime.now(timezone.utc)
             
-            def mock_query_chain(*args, **kwargs):
-                if hasattr(mock_query_chain, 'call_count'):
-                    mock_query_chain.call_count += 1
-                else:
-                    mock_query_chain.call_count = 1
-                
-                mock_result = Mock()
-                if mock_query_chain.call_count == 1:
-                    # First query: get poll by ID
-                    mock_result.first.return_value = mock_poll
-                else:
-                    # Second query: duplicate title check (should exclude current poll)
-                    mock_result.first.return_value = None  # No duplicate found
-                
-                return mock_result
-            
-            mock_db.query.return_value.filter = mock_query_chain
-            mock_db.commit = Mock()
-            mock_db.refresh = Mock()
-            
-            return mock_db
+            return create_enhanced_db_mock(poll=mock_poll, duplicate_poll=None, user_vote=None)
         
         app.dependency_overrides[get_current_user] = mock_get_current_user
         app.dependency_overrides[get_db] = mock_get_db
@@ -1054,8 +1069,6 @@ class TestPollManagement:
             return mock_user
             
         def mock_get_db():
-            mock_db = Mock()
-            
             # Mock existing poll 
             mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
             mock_poll.title = "Current Title"  # Will stay same
@@ -1063,27 +1076,7 @@ class TestPollManagement:
             # Note: is_active will change to False via helper function override
             mock_poll.pub_date = datetime.now(timezone.utc)
             
-            def mock_query_chain(*args, **kwargs):
-                if hasattr(mock_query_chain, 'call_count'):
-                    mock_query_chain.call_count += 1
-                else:
-                    mock_query_chain.call_count = 1
-                
-                mock_result = Mock()
-                if mock_query_chain.call_count == 1:
-                    # First query: get poll by ID
-                    mock_result.first.return_value = mock_poll
-                else:
-                    # Second query: duplicate title check (should exclude current poll)
-                    mock_result.first.return_value = None  # No duplicate found
-                
-                return mock_result
-            
-            mock_db.query.return_value.filter = mock_query_chain
-            mock_db.commit = Mock()
-            mock_db.refresh = Mock()
-            
-            return mock_db
+            return create_enhanced_db_mock(poll=mock_poll, duplicate_poll=None, user_vote=None)
         
         app.dependency_overrides[get_current_user] = mock_get_current_user
         app.dependency_overrides[get_db] = mock_get_db
@@ -1123,35 +1116,13 @@ class TestPollManagement:
             return mock_user
             
         def mock_get_db():
-            mock_db = Mock()
-            
             # Mock existing poll with whitespace
             mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=1)
             mock_poll.title = "Title With Spaces"  # No extra whitespace
             mock_poll.description = "Description Text"  # No extra whitespace
             mock_poll.pub_date = datetime.now(timezone.utc)
             
-            def mock_query_chain(*args, **kwargs):
-                if hasattr(mock_query_chain, 'call_count'):
-                    mock_query_chain.call_count += 1
-                else:
-                    mock_query_chain.call_count = 1
-                
-                mock_result = Mock()
-                if mock_query_chain.call_count == 1:
-                    # First query: get poll by ID
-                    mock_result.first.return_value = mock_poll
-                else:
-                    # Second query: duplicate title check (should exclude current poll)
-                    mock_result.first.return_value = None  # No duplicate found
-                
-                return mock_result
-            
-            mock_db.query.return_value.filter = mock_query_chain
-            mock_db.commit = Mock()
-            mock_db.refresh = Mock()
-            
-            return mock_db
+            return create_enhanced_db_mock(poll=mock_poll, duplicate_poll=None, user_vote=None)
         
         app.dependency_overrides[get_current_user] = mock_get_current_user
         app.dependency_overrides[get_db] = mock_get_db
@@ -1341,7 +1312,7 @@ class TestPollDeletion:
             client = TestClient(app)
             response = client.delete("/api/v1/polls/0", headers=auth_headers)
             
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             data = response.json()
             assert data["message"] == "Validation failed"
             assert data["error_code"] == "VALIDATION_ERROR"
@@ -1811,7 +1782,7 @@ class TestPollOptions:
                 headers=auth_headers
             )
             
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             data = response.json()
             assert "Validation failed" in data["message"]
             assert data["error_code"] == "VALIDATION_ERROR"
@@ -1841,7 +1812,7 @@ class TestPollOptions:
             )
             
             # Should fail validation
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             
         finally:
             app.dependency_overrides.clear()
@@ -2355,7 +2326,7 @@ class TestPollVoting:
             client = TestClient(app)
             response = client.post("/api/v1/polls/0/vote/1", headers=auth_headers)
             
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             data = response.json()
             assert data["error_code"] == "VALIDATION_ERROR"
             assert data["poll_id"] == 0
@@ -2378,7 +2349,7 @@ class TestPollVoting:
             client = TestClient(app)
             response = client.post("/api/v1/polls/1/vote/0", headers=auth_headers)
             
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             data = response.json()
             assert data["error_code"] == "VALIDATION_ERROR"
             assert data["option_id"] == 0
@@ -2478,7 +2449,7 @@ class TestPollValidation:
         response = client.post("/api/v1/polls/", json=poll_data)
         
         # Should fail validation regardless of auth status
-        assert response.status_code in [status.HTTP_422_UNPROCESSABLE_ENTITY, status.HTTP_401_UNAUTHORIZED]
+        assert response.status_code in [status.HTTP_422_UNPROCESSABLE_CONTENT, status.HTTP_401_UNAUTHORIZED]
 
     def test_poll_with_long_title(self, auth_headers):
         """Test poll creation with very long title"""
@@ -2502,7 +2473,7 @@ class TestPollValidation:
             response = client.post("/api/v1/polls/", json=poll_data, headers=auth_headers)
             
             # Should either succeed (no length limit) or fail validation
-            assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_422_UNPROCESSABLE_ENTITY, status.HTTP_500_INTERNAL_SERVER_ERROR]
+            assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_422_UNPROCESSABLE_CONTENT, status.HTTP_500_INTERNAL_SERVER_ERROR]
         finally:
             app.dependency_overrides.clear()
 
@@ -2706,9 +2677,27 @@ class TestPollPrivacy:
         def mock_get_db():
             mock_db = Mock()
             
-            # Mock public poll
+            # Mock public poll with options
             mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=True, owner_id=2)
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_poll
+            
+            # Set up query routing for different models
+            def mock_query(model):
+                mock_query_result = Mock()
+                
+                # Handle enhanced query with options()
+                def mock_options(selectinload_arg):
+                    mock_options_result = Mock()
+                    mock_options_result.filter.return_value.first.return_value = mock_poll
+                    return mock_options_result
+                
+                mock_query_result.options = mock_options
+                
+                # Handle simple query
+                mock_query_result.filter.return_value.first.return_value = mock_poll
+                
+                return mock_query_result
+            
+            mock_db.query = mock_query
             
             return mock_db
         
@@ -2771,7 +2760,30 @@ class TestPollPrivacy:
             
             # Mock private poll owned by user 2
             mock_poll = create_mock_poll(poll_id=1, is_active=True, is_public=False, owner_id=2)
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_poll
+            
+            # Set up query routing for different models and query types
+            def mock_query(model):
+                mock_query_result = Mock()
+                
+                # Handle enhanced query with options()
+                def mock_options(selectinload_arg):
+                    mock_options_result = Mock()
+                    mock_options_result.filter.return_value.first.return_value = mock_poll
+                    return mock_options_result
+                
+                mock_query_result.options = mock_options
+                
+                # Handle simple query and Vote query
+                if hasattr(model, '__name__') and model.__name__ == 'Vote':
+                    # Mock Vote query - user hasn't voted
+                    mock_query_result.filter.return_value.first.return_value = None
+                else:
+                    # Mock Poll query
+                    mock_query_result.filter.return_value.first.return_value = mock_poll
+                
+                return mock_query_result
+            
+            mock_db.query = mock_query
             
             return mock_db
         
