@@ -24,7 +24,6 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
     
     # Enhanced logging with request context
     client_ip = request.client.host if request.client else "unknown"
-    user_agent = request.headers.get("user-agent", "unknown")
     
     logger.warning(
         f"Validation error [ID: {request_id}] - "

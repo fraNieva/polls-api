@@ -20,7 +20,8 @@ from app.api.v1.utils.pagination import (
     get_pagination_params,
     create_paginated_response,
     apply_search,
-    paginate_query
+    paginate_query,
+    calculate_pagination_metadata
 )
 
 from app.api.v1.responses import (
@@ -237,7 +238,7 @@ def _validate_poll_business_rules(current_user: User, db: Session, operation: st
 
 @router.get(
     "/", 
-    response_model=PaginatedResponse[PollRead],
+    response_model=PaginatedPollResponse,
     summary="Get paginated list of polls",
     description="Retrieve polls with filtering, sorting, and pagination options. Anonymous users see public polls only. Authenticated users see public polls plus their own private polls.",
     responses=get_poll_list_responses()
@@ -335,8 +336,19 @@ def get_polls(
             search_fields=[Poll.title] if search else None
         )
         
-        # Create paginated response using utility
-        return create_paginated_response(polls, total, pagination)
+        # Calculate pagination metadata
+        pagination_meta = calculate_pagination_metadata(total, pagination)
+        
+        # Create paginated response
+        return PaginatedPollResponse(
+            polls=polls,
+            total=pagination_meta.total,
+            page=pagination_meta.page,
+            size=pagination_meta.size,
+            pages=pagination_meta.pages,
+            has_next=pagination_meta.has_next,
+            has_prev=pagination_meta.has_prev
+        )
         
     except Exception as e:
         logger.error(f"Error retrieving polls: {str(e)}")
@@ -351,7 +363,7 @@ def get_polls(
 
 @router.get(
     "/my-polls", 
-    response_model=PaginatedResponse[PollRead],
+    response_model=PaginatedPollResponse,
     summary="Get user's own polls",
     description="Retrieve paginated list of polls owned by the authenticated user with filtering and sorting options.",
     responses=get_user_polls_responses()
@@ -433,8 +445,19 @@ def get_my_polls(
             search_fields=[Poll.title] if search else None
         )
         
-        # Create paginated response using utility
-        return create_paginated_response(polls, total, pagination)
+        # Calculate pagination metadata
+        pagination_meta = calculate_pagination_metadata(total, pagination)
+        
+        # Create paginated response
+        return PaginatedPollResponse(
+            polls=polls,
+            total=pagination_meta.total,
+            page=pagination_meta.page,
+            size=pagination_meta.size,
+            pages=pagination_meta.pages,
+            has_next=pagination_meta.has_next,
+            has_prev=pagination_meta.has_prev
+        )
         
     except Exception as e:
         logger.error(f"Error retrieving user polls: {str(e)}")

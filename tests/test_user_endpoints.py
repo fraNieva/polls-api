@@ -99,8 +99,22 @@ class TestUserEndpoints:
         assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_400_BAD_REQUEST]
         
         if response.status_code == status.HTTP_400_BAD_REQUEST:
-            assert "detail" in response.json()
-            assert "already registered" in response.json()["detail"].lower()
+            error_response = response.json()
+            
+            # Handle both direct and nested response formats
+            if "detail" in error_response and isinstance(error_response["detail"], dict):
+                # Nested format (test environment)
+                detail = error_response["detail"]
+                assert "message" in detail
+                assert ("email already registered" in detail["message"].lower() or 
+                        "username already registered" in detail["message"].lower())
+                assert "error_code" in detail
+            else:
+                # Direct format (production environment)
+                assert "message" in error_response
+                assert ("email already registered" in error_response["message"].lower() or 
+                        "username already registered" in error_response["message"].lower())
+                assert "error_code" in error_response
 
     def test_create_user_invalid_email(self, client):
         """Test user creation with invalid email format fails"""

@@ -256,7 +256,7 @@ class TestPollRetrieval:
         data = response.json()
         
         # Should return paginated response structure
-        assert "items" in data
+        assert "polls" in data
         assert "total" in data
         assert "page" in data
         assert "size" in data
@@ -264,7 +264,7 @@ class TestPollRetrieval:
         assert "has_next" in data
         assert "has_prev" in data
         
-        assert isinstance(data["items"], list)
+        assert isinstance(data["polls"], list)
         assert isinstance(data["total"], int)
         assert data["page"] == 1  # Default first page
         assert data["size"] == 10  # Default page size
@@ -306,7 +306,7 @@ class TestPollRetrieval:
         response = client.get("/api/v1/polls/?search=programming")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert "items" in data
+        assert "polls" in data
         
         # Test empty search
         response = client.get("/api/v1/polls/?search=")
@@ -338,7 +338,7 @@ class TestPollRetrieval:
             response = client.get(f"/api/v1/polls/?sort={sort_by}")
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert "items" in data
+            assert "polls" in data
 
     def test_get_polls_invalid_sort(self, client):
         """Test invalid sort parameter"""
@@ -354,7 +354,7 @@ class TestPollRetrieval:
         data = response.json()
         assert data["page"] == 1
         assert data["size"] == 5
-        assert "items" in data
+        assert "polls" in data
 
     def test_get_polls_response_structure(self, client):
         """Test that response includes proper metadata and links"""
@@ -363,7 +363,7 @@ class TestPollRetrieval:
         data = response.json()
         
         # Check pagination metadata
-        required_fields = ["items", "total", "page", "size", "pages", "has_next", "has_prev"]
+        required_fields = ["polls", "total", "page", "size", "pages", "has_next", "has_prev"]
         for field in required_fields:
             assert field in data
         
@@ -435,14 +435,14 @@ class TestPollRetrieval:
             data = response.json()
             
             # Should return paginated response structure
-            assert "items" in data
+            assert "polls" in data
             assert "total" in data
             assert "page" in data
             assert "size" in data
             assert "pages" in data
             assert "has_next" in data
             assert "has_prev" in data
-            assert isinstance(data["items"], list)
+            assert isinstance(data["polls"], list)
         finally:
             app.dependency_overrides.clear()
 
@@ -503,7 +503,7 @@ class TestPollRetrieval:
             response = client.get("/api/v1/polls/my-polls?search=programming", headers=auth_headers)
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert "items" in data
+            assert "polls" in data
             
             # Test empty search
             response = client.get("/api/v1/polls/my-polls?search=", headers=auth_headers)
@@ -531,7 +531,7 @@ class TestPollRetrieval:
             response = client.get("/api/v1/polls/my-polls?is_active=true", headers=auth_headers)
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert "items" in data
+            assert "polls" in data
             
             # Test filter by inactive status
             response = client.get("/api/v1/polls/my-polls?is_active=false", headers=auth_headers)
@@ -565,7 +565,7 @@ class TestPollRetrieval:
                 response = client.get(f"/api/v1/polls/my-polls?sort={sort_option}", headers=auth_headers)
                 assert response.status_code == status.HTTP_200_OK
                 data = response.json()
-                assert "items" in data
+                assert "polls" in data
                 
         finally:
             app.dependency_overrides.clear()
@@ -594,7 +594,7 @@ class TestPollRetrieval:
             data = response.json()
             assert data["page"] == 1
             assert data["size"] == 5
-            assert "items" in data
+            assert "polls" in data
             
         finally:
             app.dependency_overrides.clear()
@@ -2966,6 +2966,6 @@ class TestPollPrivacy:
             # Should succeed but with privacy filtering applied
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert "items" in data  # FastAPI pagination uses 'items' not 'data'
+            assert "polls" in data  # FastAPI pagination uses 'items' not 'data'
         finally:
             app.dependency_overrides.clear()

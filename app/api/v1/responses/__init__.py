@@ -27,6 +27,23 @@ from .poll_responses_with_models import (
     get_poll_vote_responses,
 )
 
+from .auth_responses import (
+    get_registration_responses,
+    get_login_responses,
+    get_token_responses,
+    get_duplicate_email_response,
+    get_duplicate_username_response,
+    get_auth_business_error_response,
+)
+
+from .user_responses import (
+    get_user_profile_responses,
+    get_user_creation_responses,
+    get_user_update_responses,
+    get_user_not_found_response,
+    get_user_business_error_response,
+)
+
 # Add missing function alias
 get_poll_get_responses = get_single_poll_responses
 
@@ -56,4 +73,19 @@ __all__ = [
     "get_poll_vote_responses",
     "POLL_SUCCESS_RESPONSES",
     "POLL_ERROR_RESPONSES",
+    
+    # Auth-specific responses
+    "get_registration_responses",
+    "get_login_responses",
+    "get_token_responses",
+    "get_duplicate_email_response",
+    "get_duplicate_username_response",
+    "get_auth_business_error_response",
+    
+    # User-specific responses
+    "get_user_profile_responses",
+    "get_user_creation_responses",
+    "get_user_update_responses",
+    "get_user_not_found_response",
+    "get_user_business_error_response",
 ]
