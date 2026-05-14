@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from enum import Enum
 import math
+import anyio
 
 from app.db.database import get_db
 from app.models.polls import Poll, Vote, PollOption
@@ -49,6 +50,7 @@ from app.core.constants import (
     BusinessLimits, 
     ErrorCodes
 )
+from app.core.websocket_manager import manager
 
 import logging
 
@@ -1406,6 +1408,64 @@ def vote_poll(
         db.refresh(poll_option)
         
         logger.info(f"Vote recorded successfully: ID {vote.id}, Poll: {poll_id}, Option: {option_id}, User: {current_user.id}")
+
+        # Broadcast the update via WebSocket
+        try:
+            # 1. Prepare the enhanced poll data (same logic as get_poll)
+            # We need to reload the poll with options to get the final counts
+            updated_poll = db.query(Poll).options(
+                selectinload(Poll.options)
+            ).filter(Poll.id == poll_id).first()
+
+            if updated_poll:
+                options_data = []
+                total_votes = 0
+                for opt in updated_poll.options:
+                    total_votes += opt.vote_count
+                    options_data.append({
+                        "id": opt.id,
+                        "text": opt.text,
+                        "vote_count": opt.vote_count,
+                        "percentage": 0.0,
+                        "poll_id": opt.poll_id
+                    })
+                
+                for opt_data in options_data:
+                    if total_votes > 0:
+                        opt_data["percentage"] = round((opt_data["vote_count"] / total_votes) * 100, 2)
+
+                # 2. Construct the broadcast message
+                # Note: user_has_voted and user_vote_option_id are context-specific,
+                # so we set them to False/None for the broadcast. 
+                # The frontend's updatePollFromWebSocket reducer will preserve the 
+                # local user's own voting status while updating the global counts.
+                poll_data = {
+                    "id": updated_poll.id,
+                    "title": updated_poll.title,
+                    "description": updated_poll.description,
+                    "is_active": updated_poll.is_active,
+                    "is_public": updated_poll.is_public,
+                    "owner_id": updated_poll.owner_id,
+                    "pub_date": updated_poll.pub_date.isoformat() if updated_poll.pub_date else None,
+                    "options": options_data,
+                    "total_votes": total_votes,
+                    "user_has_voted": False,
+                    "user_vote_option_id": None
+                }
+
+                # 3. Broadcast to all listeners on this poll
+                # Using anyio to run the async broadcast from our synchronous endpoint
+                anyio.from_thread.run(
+                    manager.broadcast_to_poll,
+                    poll_id,
+                    {
+                        "type": "vote_update",
+                        "data": poll_data
+                    },
+                )
+        except Exception:
+            # A websocket broadcast failure should not fail a successful vote write.
+            logger.exception("Failed to broadcast websocket vote update for poll %s", poll_id)
         
         # Return structured response
         return {

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 from pydantic import ValidationError
 from app.db.database import engine, Base
-from app.api.v1.endpoints import users, auth, polls
+from app.api.v1.endpoints import users, auth, polls, websocket
 
 from app.core.exception import (
     validation_exception_handler,
@@ -50,6 +50,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 app.include_router(users.router, prefix=APIConfig.API_V1_PREFIX)
 app.include_router(auth.router, prefix=APIConfig.API_V1_PREFIX)
 app.include_router(polls.router, prefix=APIConfig.API_V1_PREFIX)
+app.include_router(websocket.router, prefix=APIConfig.API_V1_PREFIX)
 
 @app.get("/")
 def read_root():
