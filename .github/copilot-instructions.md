@@ -28,10 +28,11 @@ Entry point: `main.py` (repository root, **not** `app/main.py`).
 - Full Poll CRUD with smart change detection on PUT.
 - Public / private visibility with hybrid auth (`get_current_user_optional`).
 - Atomic voting with per-user duplicate prevention and daily limits.
-- Dynamic poll option management.
+- Dynamic poll option management (max 10 options, case-insensitive duplicate check).
 - Server-side percentage calculation on every response.
 - Centralized pagination, filtering, sorting, and search on all list endpoints.
 - Standardized OpenAPI response definitions.
+- Business rule validation: poll creation/update rate limiting, per-user poll limits.
 - **Real-time WebSocket broadcasting**: when a vote is recorded, the updated
   poll is pushed to all connected clients on that poll's channel.
 
@@ -66,19 +67,41 @@ main.py              # App factory, router registration, CORS, exception handler
 - **GET list endpoints** must use `app/api/v1/utils/pagination.py`:
   `PaginationParams`, `paginate_query()`, `apply_search()`.
 - **Filtering**: `is_active`, `is_public`, `owner_id`, `created_after`.
-  Use `Enum` for validated sort options.
+  Use `Enum` for validated sort options (`PollSortOption`).
 - **Responses**: never inline large response dicts — use the factories in
   `app/api/v1/responses/`.
 - **PUT endpoints**: implement change detection (`changes_made` flag, strip
-  whitespace, only commit when something changed).
+  whitespace before comparison, track `changed_fields` list, only commit when
+  something changed; log specific fields changed vs. "no changes" branch).
 - **Error handling**: raise `HTTPException` with structured `detail` dicts.
   Use constants from `app.core.constants` for all messages and codes.
+- **Business rules**: call `_validate_poll_business_rules(user, db, operation)`
+  at the start of create/update endpoints. Use different rate limits per
+  operation type (stricter for create, more lenient for update).
 
-### Authentication
+### Authentication & Access Control
 - `get_current_user` — requires a valid JWT; use for write operations.
 - `get_current_user_optional` — returns `None` for anonymous; use for reads
   and public-poll access.
 - Token is a Bearer JWT in the `Authorization` header.
+- **Privacy filtering on GET /polls**: anonymous users see only `is_public=True`
+  polls; authenticated users see public polls + their own private polls.
+- **Privacy filtering on GET /polls/{id}**: public polls accessible to anyone;
+  private polls accessible to owner only (403 for authenticated non-owners,
+  401 for anonymous).
+
+### Poll Options
+- Max options per poll: `BusinessLimits.MAX_POLL_OPTIONS` (10).
+- Max option text length: `BusinessLimits.MAX_POLL_OPTION_LENGTH` (200).
+- Duplicate detection: case-insensitive text comparison before inserting.
+- Options cannot be added to inactive polls.
+- Always check current option count from DB before inserting.
+
+### Schemas (Pydantic v2)
+- All schemas use `model_dump(exclude_unset=True)` for partial updates.
+- No deprecated v1 `class Config` — use `model_config = ConfigDict(...)`.
+- Use `Field(...)` for required fields, `Field(None)` for optional.
+- Generic paginated responses: `PaginatedResponse[T]` from `app/schemas/common.py`.
 
 ### WebSocket — Real-time Vote Broadcasting
 
@@ -138,6 +161,9 @@ Broadcast failures are caught and logged; they never roll back a valid vote.
   `except` blocks (not `logger.error(..., exc_info=True)`).
 - **Docstrings**: required on models, schemas, and endpoints.
 - **No print()** in production paths — use structured logging.
+- **Import order**: stdlib → third-party → local; group with blank lines.
+- **Error responses**: always include `detail` as a dict with `message`, `error_code`,
+  and relevant context keys (e.g., `poll_id`, `owner_id`). Never return plain strings.
 
 ---
 
@@ -148,6 +174,9 @@ Broadcast failures are caught and logged; they never roll back a valid vote.
 - Coverage target: ≥ 85 %.
 - Mock DB and external dependencies via `unittest.mock`.
 - Cover: success, validation errors, auth failures, duplicate/limit edge cases.
+- Organize tests in classes per feature: `TestPollCRUD`, `TestPollPrivacy`,
+  `TestPollOptions`, `TestVoting`, etc.
+- Test names must describe the scenario: `test_create_poll_exceeds_limit_returns_429`.
 
 ---
 
