@@ -7,8 +7,12 @@ These tests verify endpoint behavior, schema validation, and error handling.
 
 import pytest
 from unittest.mock import patch, Mock, MagicMock
-from fastapi import status
+from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from app.api.v1.endpoints.auth import login_for_access_token, register_user
 from app.models.user import User
+from app.schemas.user import UserCreate
 
 
 class TestAuthenticationEndpoints:
@@ -333,3 +337,125 @@ def test_token_expiration_handling(client):
     response = client.get("/api/v1/users/me", headers=headers)
     
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def _build_db_with_first_values(*values):
+    """Create a mock DB where consecutive .first() calls return provided values."""
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.side_effect = list(values)
+    return db
+
+
+def _build_user(**overrides):
+    user = Mock()
+    user.id = overrides.get("id", 1)
+    user.email = overrides.get("email", "user@example.com")
+    user.username = overrides.get("username", "username")
+    user.full_name = overrides.get("full_name", "Test User")
+    user.is_active = overrides.get("is_active", True)
+    user.hashed_password = overrides.get("hashed_password", "hashed")
+    return user
+
+
+class TestAuthEndpointBranches:
+    def test_register_user_rolls_back_on_integrity_error(self):
+        db = _build_db_with_first_values(None, None)
+        db.commit.side_effect = IntegrityError("stmt", "params", Exception("dup"))
+
+        user = UserCreate(
+            email="new@example.com",
+            password="safe-password",
+            full_name="New User",
+            username="newuser",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            register_user(user=user, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert exc_info.value.detail["error_code"] == "DUPLICATE_RESOURCE"
+        db.rollback.assert_called_once()
+
+    def test_register_user_rolls_back_on_sqlalchemy_error(self):
+        db = _build_db_with_first_values(None, None)
+        db.commit.side_effect = SQLAlchemyError("db down")
+
+        user = UserCreate(
+            email="new2@example.com",
+            password="safe-password",
+            full_name="New User",
+            username="newuser2",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            register_user(user=user, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert exc_info.value.detail["error_code"] == "DATABASE_ERROR"
+        db.rollback.assert_called_once()
+
+    def test_register_user_rolls_back_on_unexpected_error(self):
+        db = _build_db_with_first_values(None, None)
+        db.commit.side_effect = RuntimeError("unexpected")
+
+        user = UserCreate(
+            email="new3@example.com",
+            password="safe-password",
+            full_name="New User",
+            username="newuser3",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            register_user(user=user, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert exc_info.value.detail["error_code"] == "INTERNAL_ERROR"
+        db.rollback.assert_called_once()
+
+    @patch("app.api.v1.endpoints.auth.create_access_token", return_value="jwt-token")
+    @patch("app.api.v1.endpoints.auth.verify_password", return_value=True)
+    def test_login_for_access_token_success(self, _verify, _token):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = _build_user(
+            email="login@example.com", hashed_password="stored-hash"
+        )
+        form_data = Mock(username="login@example.com", password="secret")
+
+        response = login_for_access_token(form_data=form_data, db=db)
+
+        assert response == {"access_token": "jwt-token", "token_type": "bearer"}
+
+    @patch("app.api.v1.endpoints.auth.verify_password", return_value=False)
+    def test_login_for_access_token_invalid_credentials(self, _verify):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = _build_user()
+        form_data = Mock(username="wrong@example.com", password="bad")
+
+        with pytest.raises(HTTPException) as exc_info:
+            login_for_access_token(form_data=form_data, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.headers == {"WWW-Authenticate": "Bearer"}
+        assert exc_info.value.detail["error_code"] == "INVALID_CREDENTIALS"
+
+    def test_login_for_access_token_handles_sqlalchemy_error(self):
+        db = MagicMock()
+        db.query.side_effect = SQLAlchemyError("db crash")
+        form_data = Mock(username="any@example.com", password="any")
+
+        with pytest.raises(HTTPException) as exc_info:
+            login_for_access_token(form_data=form_data, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert exc_info.value.detail["error_code"] == "DATABASE_ERROR"
+
+    def test_login_for_access_token_handles_unexpected_error(self):
+        db = MagicMock()
+        db.query.side_effect = RuntimeError("boom")
+        form_data = Mock(username="any@example.com", password="any")
+
+        with pytest.raises(HTTPException) as exc_info:
+            login_for_access_token(form_data=form_data, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert exc_info.value.detail["error_code"] == "INTERNAL_ERROR"

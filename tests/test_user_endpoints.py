@@ -9,7 +9,12 @@ import pytest
 from unittest.mock import Mock, patch
 from fastapi import status
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from app.api.v1.endpoints.users import UserUpdate, create_user, update_user_profile
 from app.models.user import User
+from app.schemas.user import UserCreate
 
 
 class TestUserEndpoints:
@@ -194,3 +199,176 @@ class TestUserEndpointsContracts:
         # Invalid email should fail
         with pytest.raises(ValidationError):
             UserCreate(**{**valid_data, "email": "invalid"})
+
+
+def _build_db_with_first_values(*values):
+    """Create a mock DB where consecutive .first() calls return provided values."""
+    db = Mock()
+    db.query.return_value.filter.return_value.first.side_effect = list(values)
+    db.commit = Mock()
+    db.refresh = Mock()
+    db.rollback = Mock()
+    return db
+
+
+def _build_user(**overrides):
+    user = Mock()
+    user.id = overrides.get('id', 1)
+    user.email = overrides.get('email', 'user@example.com')
+    user.username = overrides.get('username', 'username')
+    user.full_name = overrides.get('full_name', 'Test User')
+    user.is_active = overrides.get('is_active', True)
+    user.hashed_password = overrides.get('hashed_password', 'hashed')
+    return user
+
+
+class TestUserEndpointBranches:
+    def test_create_user_duplicate_email(self):
+        existing = _build_user(email='existing@example.com')
+        db = _build_db_with_first_values(existing)
+
+        user = UserCreate(
+            email='existing@example.com',
+            password='safe-password',
+            full_name='New User',
+            username='newuser',
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_user(user=user, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert exc_info.value.detail['error_code'] == 'DUPLICATE_RESOURCE'
+
+    def test_create_user_duplicate_username(self):
+        existing = _build_user(username='existinguser')
+        db = _build_db_with_first_values(None, existing)
+
+        user = UserCreate(
+            email='new@example.com',
+            password='safe-password',
+            full_name='New User',
+            username='existinguser',
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_user(user=user, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert exc_info.value.detail['error_code'] == 'DUPLICATE_RESOURCE'
+
+    def test_create_user_handles_integrity_error(self):
+        db = _build_db_with_first_values(None, None)
+        db.commit.side_effect = IntegrityError('stmt', 'params', Exception('dup'))
+
+        user = UserCreate(
+            email='new4@example.com',
+            password='safe-password',
+            full_name='New User',
+            username='newuser4',
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            create_user(user=user, db=db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert exc_info.value.detail['error_code'] == 'DUPLICATE_RESOURCE'
+        db.rollback.assert_called_once()
+
+    def test_update_user_profile_no_payload_returns_current_user(self):
+        db = Mock()
+        db.commit = Mock()
+        current_user = _build_user()
+
+        response = update_user_profile(
+            user_update=UserUpdate(),
+            current_user=current_user,
+            db=db,
+        )
+
+        assert response is current_user
+        db.commit.assert_not_called()
+
+    def test_update_user_profile_duplicate_email(self):
+        db = Mock()
+        db.query.return_value.filter.return_value.first.return_value = _build_user(
+            id=2, email='new@example.com'
+        )
+        current_user = _build_user(id=1, email='current@example.com')
+
+        with pytest.raises(HTTPException) as exc_info:
+            update_user_profile(
+                user_update=UserUpdate(email='new@example.com'),
+                current_user=current_user,
+                db=db,
+            )
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert exc_info.value.detail['error_code'] == 'DUPLICATE_RESOURCE'
+
+    def test_update_user_profile_duplicate_username(self):
+        db = Mock()
+        db.query.return_value.filter.return_value.first.side_effect = [None, _build_user(id=2)]
+        current_user = _build_user(id=1, username='currentuser')
+
+        with pytest.raises(HTTPException) as exc_info:
+            update_user_profile(
+                user_update=UserUpdate(email='same@example.com', username='takenuser'),
+                current_user=current_user,
+                db=db,
+            )
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert exc_info.value.detail['error_code'] == 'DUPLICATE_RESOURCE'
+
+    def test_update_user_profile_changes_and_commits(self):
+        db = Mock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        db.commit = Mock()
+        db.refresh = Mock()
+        current_user = _build_user(email='current@example.com', full_name='Current Name')
+
+        response = update_user_profile(
+            user_update=UserUpdate(email=' next@example.com ', full_name=' Next Name '),
+            current_user=current_user,
+            db=db,
+        )
+
+        assert response is current_user
+        assert current_user.email == 'next@example.com'
+        assert current_user.full_name == 'Next Name'
+        db.commit.assert_called_once()
+        db.refresh.assert_called_once_with(current_user)
+
+    def test_update_user_profile_same_trimmed_values_no_commit(self):
+        db = Mock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        db.commit = Mock()
+        current_user = _build_user(email='same@example.com', full_name='Same Name')
+
+        response = update_user_profile(
+            user_update=UserUpdate(email=' same@example.com ', full_name=' Same Name '),
+            current_user=current_user,
+            db=db,
+        )
+
+        assert response is current_user
+        db.commit.assert_not_called()
+
+    def test_update_user_profile_handles_sqlalchemy_error(self):
+        db = Mock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        db.commit = Mock(side_effect=SQLAlchemyError('cannot commit'))
+        db.rollback = Mock()
+        current_user = _build_user(email='old@example.com')
+
+        with pytest.raises(HTTPException) as exc_info:
+            update_user_profile(
+                user_update=UserUpdate(email='new@example.com'),
+                current_user=current_user,
+                db=db,
+            )
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert exc_info.value.detail['error_code'] == 'DATABASE_ERROR'
+        db.rollback.assert_called_once()
